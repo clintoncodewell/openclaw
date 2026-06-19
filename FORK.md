@@ -47,18 +47,43 @@ swiftformat/swiftlint pre-build lint scripts, so you do **not** need those insta
 
 ## Connect to my gateway
 
-The app connects to an OpenClaw Gateway as a `role: node`. My gateway is tailnet-bound at
-**`100.65.245.83:18789`** (`ws://`, token auth) on `advisewell-vm`.
+The app connects to an OpenClaw Gateway as a `role: node`. Two ways in:
 
-1. The iPhone (or the Mac, for the Simulator) must be **on the Tailscale tailnet** — discovery
-   (Bonjour) won't cross the tailnet, so use **manual host/port**.
-2. In the app: **Settings → Gateway → Advanced / manual host** → host `100.65.245.83`, port `18789`,
-   TLS **off**.
-3. Pair: on the gateway run `openclaw pair qr` (or `openclaw pair` for a setup code), enter/scan it
-   in the app, then approve with `openclaw devices approve <id>` + `openclaw nodes approve <id>`.
-   (On the VM the CLI needs `--url ws://100.65.245.83:18789 --token <gateway token>`.)
-4. Verify: chat/talk should round-trip, and `node.invoke` capabilities (camera, screen, location,
-   etc.) work in the foreground.
+### A) Public — no Tailscale on the phone (recommended), via Tailscale Funnel
+
+The gateway is exposed publicly over TLS by Tailscale Funnel:
+**`wss://clinton-dev-vm-1.tail405bf7.ts.net:8443`** → proxied to the gateway's `localhost:18789`.
+
+- In the app: **Settings → Gateway → manual host** → host `clinton-dev-vm-1.tail405bf7.ts.net`,
+  port **`8443`**, TLS **on**.
+- Works from anywhere on the internet (verified: public-DNS → Funnel ingress → TLS 1.3 → gateway
+  WS `101`). The real Let's Encrypt cert means the app can pin it and **autoconnect on launch**.
+- The security boundary is now the gateway's **pairing + token auth**, not the tailnet — the gateway
+  is internet-reachable. That's the trade for not needing Tailscale on every client.
+
+Funnel admin (on `advisewell-vm`):
+```bash
+tailscale funnel --bg --https=8443 http://127.0.0.1:18789   # enable (persists)
+tailscale funnel status                                      # show
+tailscale funnel --https=8443 off                            # disable -> back to tailnet-only
+```
+Requires a Tailscale **Standard+** plan and the `funnel` node attribute enabled for the node
+(one-time approve at `https://login.tailscale.com/f/funnel?node=<id>`). The separate `443 → :3100`
+serve mapping is untouched.
+
+### B) Tailnet-only (Tailscale required on the client)
+
+host `100.65.245.83`, port `18789`, TLS **off** (the gateway's direct tailnet bind). The phone/Mac
+must be on the tailnet; Bonjour discovery won't cross the tailnet, so use manual host/port.
+
+### Pairing (once, either way)
+
+On the gateway: `openclaw pair qr` (or `openclaw pair` for a setup code), scan/enter it in the app,
+then approve: `openclaw devices approve <id>` + `openclaw nodes approve <id>`.
+(On the VM the CLI needs `--url ws://100.65.245.83:18789 --token <gateway token>`.)
+
+Verify: chat/talk round-trips, and `node.invoke` capabilities (camera, screen, location, etc.) work
+in the foreground.
 
 ## Keep up with upstream
 
