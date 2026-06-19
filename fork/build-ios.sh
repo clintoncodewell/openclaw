@@ -15,9 +15,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IOS_DIR="${ROOT_DIR}/apps/ios"
-# HJH7DK6VNJ = the free personal team that has a working local Apple Development cert
-# (the one Dropnote signs with). Override via OPENCLAW_FORK_TEAM if you switch Apple IDs.
-TEAM="${OPENCLAW_FORK_TEAM:-HJH7DK6VNJ}"
+# 36H9FH5KZM = the free personal team signed into Xcode's accounts on this Mac, so automatic
+# device signing works (verified: built + installed to a real iPhone). The keychain also has a
+# separate HJH7DK6VNJ "Apple Development" cert, but that Apple ID isn't in Xcode, so it can't
+# auto-provision device builds. Override via OPENCLAW_FORK_TEAM if you switch Apple IDs.
+TEAM="${OPENCLAW_FORK_TEAM:-36H9FH5KZM}"
 MODE="${1:-open}"
 
 echo "==> Configuring signing for team ${TEAM} (free personal, single-target, no push/app-groups)"

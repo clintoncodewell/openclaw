@@ -33,8 +33,9 @@ fork/build-ios.sh sim      # build for the iOS Simulator (no signing) — fastes
 fork/build-ios.sh open     # configure signing + generate, then open Xcode → Run on your iPhone
 ```
 
-`build-ios.sh` runs `scripts/ios-configure-signing.sh` (pinned to team **HJH7DK6VNJ**, the free
-personal team with a working local cert), then `xcodegen generate --spec project.fork.yml`.
+`build-ios.sh` runs `scripts/ios-configure-signing.sh` (pinned to team **36H9FH5KZM** — the free
+personal team signed into Xcode here, so automatic device signing works; verified by a real
+`devicectl` install to an iPhone), then `xcodegen generate --spec project.fork.yml`.
 
 **Device install (free team):** easiest via Xcode — `fork/build-ios.sh open`, pick the `OpenClaw`
 scheme + your iPhone, Run. Xcode handles the interactive free-team provisioning + the on-device
