@@ -96,11 +96,9 @@ git push origin fork/main       # publish the synced fork
 **Drift to watch:** `project.fork.yml` is a hand-mirrored copy of the upstream `OpenClaw` app target.
 It's a new file upstream never touches, so merges don't conflict on it — but if upstream adds an SPM
 dependency, build setting, or Info.plist key to the app target in `project.yml`, mirror that change
-into `project.fork.yml`. `sync-upstream.sh` flags when `project.yml` changed so you know to look:
-
-```bash
-git diff ORIG_HEAD..HEAD -- apps/ios/project.yml
-```
+into `project.fork.yml`. After a sync, `sync-upstream.sh` detects whether `project.yml` changed and
+prints the exact `git diff <pre-merge-sha>..HEAD -- apps/ios/project.yml` command to run — it captures
+the pre-merge SHA itself, so you don't rely on the global `ORIG_HEAD` (unreliable after prior merges).
 
 ## Fork-local files (everything this fork adds)
 

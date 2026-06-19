@@ -55,14 +55,30 @@ case "${MODE}" in
       CODE_SIGNING_ALLOWED=NO build
     ;;
   device)
-    # 'generic/platform=iOS' only produces a generic build and never installs. Resolve a
-    # concrete connected device so we can build for it AND install it.
-    UDID="$(xcrun xctrace list devices 2>/dev/null \
-      | awk '/^== Devices ==/{d=1;next} /^== /{d=0} d' \
-      | grep -vi 'simulator' \
-      | grep -oE '\(([0-9A-Fa-f-]{25,})\)[[:space:]]*$' | tr -d '() ' | head -1)"
+    # Resolve a connected iPhone/iPad via devicectl (CoreDevice). Unlike `xctrace list devices`,
+    # devicectl does NOT list the host Mac, so we can't accidentally pick the Mac's UDID. The
+    # `|| true` keeps `set -e`/pipefail from aborting before the friendly empty-result check.
+    DEVJSON="$(mktemp)"
+    xcrun devicectl list devices --json-output "${DEVJSON}" >/dev/null 2>&1 || true
+    UDID="$(python3 - "${DEVJSON}" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for dev in data.get("result", {}).get("devices", []):
+    hw = dev.get("hardwareProperties", {})
+    cp = dev.get("connectionProperties", {})
+    dtype = (hw.get("deviceType") or "").lower()
+    connected = (cp.get("tunnelState") or "").lower() == "connected"
+    # Only pick a currently-connected iPhone/iPad (skip the host Mac + paired-but-absent devices).
+    if dtype in ("iphone", "ipad") and connected and dev.get("identifier"):
+        print(dev["identifier"]); break
+PY
+)"
+    rm -f "${DEVJSON}"
     if [[ -z "${UDID}" ]]; then
-      echo "ERROR: no connected iPhone found. Plug in + unlock the device and trust this Mac," >&2
+      echo "ERROR: no connected iPhone/iPad found. Plug in + unlock the device and trust this Mac," >&2
       echo "       or use 'fork/build-ios.sh open' (Xcode Run handles the free-team trust prompt)." >&2
       exit 1
     fi
