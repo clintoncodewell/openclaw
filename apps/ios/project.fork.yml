@@ -1,0 +1,148 @@
+# project.fork.yml — Clinton's free-team, single-target local build of the OpenClaw iOS app.
+#
+# Why this file exists:
+#   The canonical apps/ios/project.yml builds a 5-target app (app + Share Extension +
+#   Activity/Live-Activity Widget + Watch app + Watch extension) and signs an
+#   `aps-environment` (push) entitlement. Those require Push Notifications + App Groups
+#   capabilities and >3 App IDs — none of which a FREE personal Apple team (HJH7DK6VNJ)
+#   can provision. So for local device installs on a free team we generate from THIS
+#   spec instead: the OpenClaw app target ONLY, no push entitlement, no extensions.
+#
+#   The app's own Sources use no App Groups, read the bundle id dynamically, and degrade
+#   gracefully without push/watch/widget (APNs registration simply fails its callback —
+#   see apps/ios/README.md "APNs Expectations"). So a single-target build is sound; you
+#   lose background push delivery + the share-sheet/watch/widget surfaces, which the
+#   upstream README already lists as foreground-first / not-yet-reliable anyway.
+#
+# Build it with:  scripts/fork-ios.sh        (wraps signing + version + xcodegen + build)
+# or by hand:     ./scripts/ios-configure-signing.sh && ./scripts/ios-write-version-xcconfig.sh \
+#                   && cd apps/ios && xcodegen generate --spec project.fork.yml && open OpenClaw.xcodeproj
+#
+# Keeping it mergeable: this is a NEW file upstream never touches, so `git merge upstream/main`
+# won't conflict here. After a sync, diff the upstream `OpenClaw` target in project.yml against
+# this target and mirror any new SPM deps / build settings / Info.plist keys. See FORK.md.
+
+name: OpenClaw
+options:
+  bundleIdPrefix: ai.openclawfoundation
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+
+packages:
+  OpenClawKit:
+    path: ../shared/OpenClawKit
+  Swabble:
+    path: ../swabble
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 147.0.0
+
+schemes:
+  OpenClaw:
+    shared: true
+    build:
+      targets:
+        OpenClaw: all
+
+targets:
+  OpenClaw:
+    type: application
+    platform: iOS
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    sources:
+      - path: Sources
+    # No extension/watch embeds (free-team can't sign them), and the lint preBuildScripts
+    # are dropped so the build doesn't hard-require swiftformat/swiftlint on PATH.
+    dependencies:
+      - package: OpenClawKit
+      - package: OpenClawKit
+        product: OpenClawChatUI
+      - package: OpenClawKit
+        product: OpenClawProtocol
+      - package: Swabble
+        product: SwabbleKit
+      - package: WebRTC
+      - sdk: AppIntents.framework
+    settings:
+      base:
+        CODE_SIGN_IDENTITY: "$(OPENCLAW_CODE_SIGN_IDENTITY)"
+        # CODE_SIGN_ENTITLEMENTS intentionally omitted: the only entitlement upstream sets
+        # is aps-environment (push), which a free personal team cannot provision.
+        CODE_SIGN_STYLE: "$(OPENCLAW_CODE_SIGN_STYLE)"
+        DEVELOPMENT_TEAM: "$(OPENCLAW_DEVELOPMENT_TEAM)"
+        PRODUCT_BUNDLE_IDENTIFIER: "$(OPENCLAW_APP_BUNDLE_ID)"
+        PROVISIONING_PROFILE_SPECIFIER: "$(OPENCLAW_APP_PROFILE)"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SUPPORTS_LIVE_ACTIVITIES: YES
+        ENABLE_APPINTENTS_METADATA: NO
+        ENABLE_APP_INTENTS_METADATA_GENERATION: NO
+      configs:
+        Debug:
+          OPENCLAW_PUSH_TRANSPORT: direct
+          OPENCLAW_PUSH_DISTRIBUTION: local
+          OPENCLAW_PUSH_RELAY_BASE_URL: ""
+          OPENCLAW_PUSH_APNS_ENVIRONMENT: sandbox
+        Release:
+          OPENCLAW_PUSH_TRANSPORT: direct
+          OPENCLAW_PUSH_DISTRIBUTION: local
+          OPENCLAW_PUSH_RELAY_BASE_URL: ""
+          OPENCLAW_PUSH_APNS_ENVIRONMENT: production
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: OpenClaw
+        CFBundleIconName: AppIcon
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.openclawfoundation.app
+            CFBundleURLSchemes:
+              - openclaw
+        CFBundleShortVersionString: "$(OPENCLAW_MARKETING_VERSION)"
+        OpenClawCanonicalVersion: "$(OPENCLAW_IOS_VERSION)"
+        CFBundleVersion: "$(OPENCLAW_BUILD_VERSION)"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes:
+          - audio
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - "$(OPENCLAW_APP_BUNDLE_ID).bgrefresh"
+        NSLocalNetworkUsageDescription: OpenClaw discovers and connects to your OpenClaw gateway on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInWebContent: true
+          NSAllowsLocalNetworking: true
+        NSBonjourServices:
+          - _openclaw-gw._tcp
+        NSCameraUsageDescription: OpenClaw can capture photos or short video clips when requested via the gateway.
+        NSCalendarsUsageDescription: OpenClaw uses your calendars to show events and scheduling context when you enable calendar access.
+        NSCalendarsFullAccessUsageDescription: OpenClaw uses your calendars to show events and scheduling context when you enable calendar access.
+        NSCalendarsWriteOnlyAccessUsageDescription: OpenClaw uses your calendars to add events when you enable calendar access.
+        NSContactsUsageDescription: OpenClaw uses your contacts so you can search and reference people while using the assistant.
+        NSLocationWhenInUseUsageDescription: OpenClaw uses your location when you allow location sharing.
+        NSLocationAlwaysAndWhenInUseUsageDescription: OpenClaw can share your location in the background when you enable Always.
+        NSMicrophoneUsageDescription: OpenClaw uses the microphone for realtime chat, voice wake, and push-to-talk.
+        NSMotionUsageDescription: OpenClaw may use motion data to support device-aware interactions and automations.
+        NSPhotoLibraryUsageDescription: OpenClaw needs photo library access when you choose existing photos to share with your assistant.
+        NSRemindersFullAccessUsageDescription: OpenClaw uses your reminders to list, add, and complete tasks when you enable reminders access.
+        NSSpeechRecognitionUsageDescription: OpenClaw uses on-device speech recognition for talk mode and voice wake.
+        NSSupportsLiveActivities: true
+        ITSAppUsesNonExemptEncryption: false
+        OpenClawPushTransport: "$(OPENCLAW_PUSH_TRANSPORT)"
+        OpenClawPushDistribution: "$(OPENCLAW_PUSH_DISTRIBUTION)"
+        OpenClawPushRelayBaseURL: "$(OPENCLAW_PUSH_RELAY_BASE_URL)"
+        OpenClawPushAPNsEnvironment: "$(OPENCLAW_PUSH_APNS_ENVIRONMENT)"
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
