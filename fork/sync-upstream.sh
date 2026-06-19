@@ -28,18 +28,23 @@ if [[ "${1:-}" == "--check" ]]; then
   exit 0
 fi
 
-CURRENT="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "${CURRENT}" != "${BRANCH}" ]]; then
-  echo "==> Switching to ${BRANCH} (was ${CURRENT})"
-  git checkout "${BRANCH}"
-fi
-
+# Refuse on a dirty tree BEFORE touching branches — otherwise `git checkout fork/main`
+# could fail mid-script or carry local edits onto fork/main before we bail.
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "ERROR: working tree is dirty. Commit or stash before syncing." >&2
   git status --short >&2
   exit 1
 fi
 
+CURRENT="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "${CURRENT}" != "${BRANCH}" ]]; then
+  echo "==> Switching to ${BRANCH} (was ${CURRENT})"
+  git checkout "${BRANCH}"
+fi
+
+# Capture the exact pre-merge commit. ORIG_HEAD is global/sticky and unreliable after an
+# up-to-date/failed merge or any prior merge/rebase, so don't use it for the drift diff.
+BEFORE="$(git rev-parse HEAD)"
 echo "==> Merging upstream/main into ${BRANCH}"
 git merge --no-edit upstream/main
 
@@ -47,12 +52,12 @@ git merge --no-edit upstream/main
 # changed that target (new SPM dep, build setting, Info.plist key), mirror it by hand.
 echo ""
 echo "==> Drift check: did upstream touch the iOS app target config?"
-if git diff --quiet "ORIG_HEAD..HEAD" -- apps/ios/project.yml; then
+if git diff --quiet "${BEFORE}..HEAD" -- apps/ios/project.yml; then
   echo "    apps/ios/project.yml unchanged — project.fork.yml likely still in sync."
 else
   echo "    apps/ios/project.yml CHANGED upstream. Review the OpenClaw target and mirror any new"
   echo "    deps/settings/Info.plist keys into apps/ios/project.fork.yml:"
-  echo "      git diff ORIG_HEAD..HEAD -- apps/ios/project.yml"
+  echo "      git diff ${BEFORE}..HEAD -- apps/ios/project.yml"
 fi
 
 echo ""

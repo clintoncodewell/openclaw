@@ -23,12 +23,15 @@ MODE="${1:-open}"
 echo "==> Configuring signing for team ${TEAM} (free personal, single-target, no push/app-groups)"
 IOS_DEVELOPMENT_TEAM="${TEAM}" "${ROOT_DIR}/scripts/ios-configure-signing.sh"
 
-# Version vars come from the checked-in apps/ios/Config/Version.xcconfig; the optional
-# build/Version.xcconfig writer needs `tsx` (pnpm install) so we just skip it if absent.
-if "${ROOT_DIR}/scripts/ios-write-version-xcconfig.sh" >/dev/null 2>&1; then
-  echo "==> Wrote build/Version.xcconfig"
+# Version vars resolve from the checked-in apps/ios/Config/Version.xcconfig. The optional
+# build/Version.xcconfig writer needs `tsx` (from `pnpm install`). Only skip when tsx is
+# genuinely unavailable; otherwise run it for real so real failures (bad version metadata,
+# refused symlinked build path) aren't silently swallowed.
+if (cd "${ROOT_DIR}" && node --import tsx -e '' ) >/dev/null 2>&1; then
+  echo "==> Writing build/Version.xcconfig"
+  "${ROOT_DIR}/scripts/ios-write-version-xcconfig.sh"
 else
-  echo "==> Skipping build/Version.xcconfig (using checked-in Config/Version.xcconfig)"
+  echo "==> tsx not installed (run 'pnpm install'); using checked-in Config/Version.xcconfig"
 fi
 
 echo "==> Generating OpenClaw.xcodeproj from project.fork.yml"
@@ -52,13 +55,29 @@ case "${MODE}" in
       CODE_SIGNING_ALLOWED=NO build
     ;;
   device)
-    echo "==> Building + installing to a connected iPhone (free-team auto-provisioning)"
+    # 'generic/platform=iOS' only produces a generic build and never installs. Resolve a
+    # concrete connected device so we can build for it AND install it.
+    UDID="$(xcrun xctrace list devices 2>/dev/null \
+      | awk '/^== Devices ==/{d=1;next} /^== /{d=0} d' \
+      | grep -vi 'simulator' \
+      | grep -oE '\(([0-9A-Fa-f-]{25,})\)[[:space:]]*$' | tr -d '() ' | head -1)"
+    if [[ -z "${UDID}" ]]; then
+      echo "ERROR: no connected iPhone found. Plug in + unlock the device and trust this Mac," >&2
+      echo "       or use 'fork/build-ios.sh open' (Xcode Run handles the free-team trust prompt)." >&2
+      exit 1
+    fi
+    echo "==> Building for connected device ${UDID} (free-team auto-provisioning)"
     xcodebuild -project OpenClaw.xcodeproj -scheme OpenClaw -configuration Debug \
-      -destination 'generic/platform=iOS' \
+      -destination "id=${UDID}" \
       -allowProvisioningUpdates \
       -derivedDataPath build/DerivedData \
       build
-    echo "    If install didn't happen automatically, run from Xcode (fork/build-ios.sh open)."
+    APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/OpenClaw.app"
+    echo "==> Installing ${APP_PATH} to ${UDID}"
+    xcrun devicectl device install app --device "${UDID}" "${APP_PATH}"
+    echo "==> Installed. First run only: trust the developer in"
+    echo "    Settings > General > VPN & Device Management. (First-ever install is smoothest via"
+    echo "    'fork/build-ios.sh open' + Xcode Run.)"
     ;;
   *)
     echo "Unknown mode: ${MODE} (use: open | sim | gen | device)" >&2
