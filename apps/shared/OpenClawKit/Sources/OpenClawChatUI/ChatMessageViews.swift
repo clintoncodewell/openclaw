@@ -290,7 +290,9 @@ private struct ChatMessageBody: View {
             }
 
             // Collapse a turn's tool calls + their results into one compact bubble so the
-            // transcript stays readable; expansion is view-local @State keyed by the stable message id.
+            // transcript stays readable. Expansion is view-local @State; note the host message's
+            // identity (messageContentFingerprint) shifts as tool calls/results stream into the
+            // turn, so expansion can reset on those refreshes until the turn settles.
             if self.showsAssistantTrace,
                !self.toolCalls.isEmpty || !self.inlineToolResults.isEmpty
             {
@@ -577,18 +579,42 @@ private struct ToolTraceBubble: View {
         return "\(count) \(noun): \(joined)\(suffix)"
     }
 
-    // Pair each tool call with its result by id. Calls without a match render as "Pending" (e.g.
-    // an interrupted turn). If a turn somehow has only results, fall back to rendering those.
+    // Pair each tool call with its result. Prefer id-equality, but mergeToolResults
+    // (ChatView.mergeToolResults) also attaches a result via the assistant message's
+    // top-level toolCallId, in which case the tool-call *content* block has no matching
+    // `id`. To avoid dropping those, fall back to positional pairing, and emit any result
+    // never claimed by a call as its own row so merged output is never silently discarded.
     private var rows: [ToolTraceRowModel] {
         if self.toolCalls.isEmpty {
             return self.toolResults.enumerated().map { idx, result in
                 ToolTraceRowModel(index: idx, call: nil, result: result)
             }
         }
-        return self.toolCalls.enumerated().map { idx, call in
-            let result = self.toolResults.first { $0.id != nil && $0.id == call.id }
-            return ToolTraceRowModel(index: idx, call: call, result: result)
+
+        var remaining = Array(self.toolResults.enumerated())
+        var rows: [ToolTraceRowModel] = []
+        rows.reserveCapacity(self.toolCalls.count + remaining.count)
+
+        for (idx, call) in self.toolCalls.enumerated() {
+            let matchIndex = remaining.firstIndex { _, result in
+                result.id != nil && result.id == call.id
+            } ?? (call.id == nil ? remaining.indices.first : nil)
+
+            if let matchIndex {
+                rows.append(ToolTraceRowModel(index: idx, call: call, result: remaining[matchIndex].element))
+                remaining.remove(at: matchIndex)
+            } else {
+                rows.append(ToolTraceRowModel(index: idx, call: call, result: nil))
+            }
         }
+
+        // Any merged result not claimed by a call still gets rendered (e.g. message-level
+        // toolCallId matches with no per-call content id), rather than vanishing.
+        let base = self.toolCalls.count
+        for (offset, entry) in remaining.enumerated() {
+            rows.append(ToolTraceRowModel(index: base + offset, call: nil, result: entry.element))
+        }
+        return rows
     }
 }
 
@@ -632,25 +658,29 @@ private struct ToolTraceRow: View {
 
     @ViewBuilder
     private var resultView: some View {
-        let formatted = self.resultText
-        if formatted.isEmpty {
-            // No matching tool.result means the call never completed (commonly an interrupted turn).
+        if self.result == nil {
+            // No result row was paired to this call: the tool never completed (commonly an
+            // interrupted turn). A matched result whose summary formats to "" is a completed
+            // call we just can't summarize — render nothing, like ToolResultCard, not "Pending".
             Label("Pending", systemImage: "clock")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else {
-            Text(self.displayedResult(formatted))
-                .font(.caption.monospaced())
-                .foregroundStyle(self.isUser ? OpenClawChatTheme.userText : OpenClawChatTheme.assistantText)
-                .lineLimit(self.resultExpanded ? nil : Self.previewLineLimit)
+            let formatted = self.resultText
+            if !formatted.isEmpty {
+                Text(self.displayedResult(formatted))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(self.isUser ? OpenClawChatTheme.userText : OpenClawChatTheme.assistantText)
+                    .lineLimit(self.resultExpanded ? nil : Self.previewLineLimit)
 
-            if self.resultLineCount(formatted) > Self.previewLineLimit {
-                Button(self.resultExpanded ? "Show less" : "Show full output") {
-                    self.resultExpanded.toggle()
+                if self.resultLineCount(formatted) > Self.previewLineLimit {
+                    Button(self.resultExpanded ? "Show less" : "Show full output") {
+                        self.resultExpanded.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
         }
     }
@@ -877,12 +907,6 @@ struct ChatPendingToolsBubble: View {
     private var summary: String {
         let count = self.toolCalls.count
         return "Running \(count) \(count == 1 ? "tool" : "tools")…"
-    }
-}
-
-extension ChatPendingToolsBubble: @MainActor Equatable {
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.toolCalls == rhs.toolCalls
     }
 }
 
