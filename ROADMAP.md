@@ -18,6 +18,36 @@ at-a-glance control planes à la Home Assistant/Grafana; agent "inbox" + HITL ap
 
 ---
 
+## What the research says (deep-research: 103 agents, ranked)
+
+The single biggest thing the best agent command centers do that **most don't**: a **bidirectional,
+push-driven Agent Inbox** — agents escalate decisions/questions/briefs *to* you; you assign work *back*.
+Ranked priorities, mapped to our waves:
+
+1. **Agent Inbox (flagship)** — standardize on LangChain's vocabulary: actions **Accept / Edit /
+   Respond / Ignore**; interrupt types **Notify / Question / Review**. UX = email-inbox × ticketing
+   (AgentRQ: "agents assign tasks to you, you assign back"). We already have the `operator.approvals`
+   scope (from the loopback-bind fix). → **the next big build after Briefs.**
+2. **Proactive, action-suggesting briefs** — not just readable text; prioritized against your goals with
+   1–3 tappable **next-action** buttons (Gemini Daily Brief; Home Assistant proactive confirmations).
+   → **Wave 1 (building) — make the Briefs Inbox actionable, not passive.**
+3. **Cost guardrails** — per-model AND per-tool/operation attribution + budget caps/alerts. → Wave 2.
+4. **Tool-call trace viewer** — the pattern the field converged on: hierarchical traces, a
+   **tree/timeline toggle**, per-step tokens/latency, expandable spans w/ JSON + reasoning
+   (Langfuse / Grafana AI Observability / Phoenix). → Wave 2.
+5. **RED-style at-a-glance overview** — requests, RPS, error rate, latency, TTFT (Grafana ops pattern
+   for agents). → Wave 2.
+6. **Model routing + fallbacks + a security/audit surface** (Portkey/LiteLLM gateway pattern; provider
+   auth health). → Wave 3.
+
+**Closest OSS analog to copy:** *Mission Control* (builderz-labs) — self-hosted, SQLite, 32 panels
+(agents/tasks/skills/logs/tokens/memory/security/cron/alerts/pipelines), an "Aegis" quality-gate HITL,
+6-column Kanban, Recharts token dashboards, WebSocket+SSE real-time feed. **Observability bar:** Grafana
+Cloud AI Observability + Langfuse. **Honest caveat:** AgentRQ's "sub-second push, no polling" claim was
+*refuted* in verification — do push via APNs without overpromising latency.
+
+---
+
 ## Wave 1 — High Impact / High Priority (building now)
 
 1. **Briefs / Reports Inbox** ⭐ *(your #1 ask)* — a dedicated surface that aggregates every cron/agent
