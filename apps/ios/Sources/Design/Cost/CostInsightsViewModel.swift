@@ -79,11 +79,13 @@ final class CostInsightsViewModel {
         return nil
     }
 
-    /// Spend value for the currently-selected range, for the headline metric + budget comparison.
+    /// Spend value for the currently-selected range's headline metric. `todayUSD` is optional
+    /// (unavailable when its dedicated call failed); the headline coerces that to 0, while the budget
+    /// card reads `report.todayUSD` directly so it can distinguish "unavailable" from "$0 spent".
     func spend(for range: CostRange) -> Double {
         guard let report = self.report else { return 0 }
         switch range {
-        case .today: return report.todayUSD
+        case .today: return report.todayUSD ?? 0
         case .sevenDay: return report.last7USD
         case .thirtyDay: return report.last30USD
         }
@@ -101,11 +103,14 @@ final class CostInsightsViewModel {
             self.state = .loading
         }
 
-        // Three concurrent reads: `usage.cost` 30d for the trend + 7d/30d totals, `usage.cost`
-        // `{"days":1,"mode":"gateway"}` for today's spend (a key-independent window SUM scoped to the
-        // gateway host's local day — see `todayParamsJSON`), and `sessions.usage` for the per-model /
-        // per-agent / model-mix aggregates. All scoped `agentScope: all` so the dashboard reflects every
-        // agent's spend, not just the active one.
+        // Four concurrent reads, each a key-independent window SUM scoped to the gateway host's local
+        // day (`mode: gateway`) so no window depends on the sparse, gap-prone `daily` series: `usage.cost`
+        // 30d for the trend + 30d total, `usage.cost` `{"days":1}` for today, `usage.cost` `{"days":7}`
+        // for the 7-day total, and `sessions.usage` for the per-model / per-agent / model-mix aggregates.
+        // All scoped `agentScope: all` so the dashboard reflects every agent's spend, not just the active
+        // one. The prior report is captured first so a failed today/7d call carries the last-known value
+        // forward instead of falsely reading $0.
+        let previous = self.report
         async let costData = Self.requestData(
             appModel: appModel,
             method: "usage.cost",
@@ -114,6 +119,10 @@ final class CostInsightsViewModel {
             appModel: appModel,
             method: "usage.cost",
             paramsJSON: Self.todayParamsJSON())
+        async let last7Data = Self.requestData(
+            appModel: appModel,
+            method: "usage.cost",
+            paramsJSON: Self.last7ParamsJSON())
         async let sessionsData = Self.requestData(
             appModel: appModel,
             method: "sessions.usage",
@@ -121,6 +130,7 @@ final class CostInsightsViewModel {
 
         let cost = await costData
         let today = await todayData
+        let last7 = await last7Data
         let sessions = await sessionsData
 
         // `usage.cost` is the primary source; if it failed entirely, keep any prior report and only
@@ -134,8 +144,14 @@ final class CostInsightsViewModel {
         }
 
         let todaySummary = today.flatMap { try? JSONDecoder().decode(CostUsageSummaryLite.self, from: $0) }
+        let last7Summary = last7.flatMap { try? JSONDecoder().decode(CostUsageSummaryLite.self, from: $0) }
         let sessionsResult = sessions.flatMap { SessionsUsageResultLite.decode(from: $0) }
-        let report = Self.buildReport(summary: summary, today: todaySummary, sessions: sessionsResult)
+        let report = Self.buildReport(
+            summary: summary,
+            today: todaySummary,
+            last7: last7Summary,
+            sessions: sessionsResult,
+            previous: previous)
 
         // A report with no trend and no breakdown means the account simply has no recorded spend yet.
         let hasAnySignal = report.last30USD > 0
@@ -164,6 +180,14 @@ final class CostInsightsViewModel {
     /// rollup keys, which would miss the bucket whenever the gateway host isn't on UTC.
     private static func todayParamsJSON() -> String {
         "{\"days\":1,\"agentScope\":\"all\",\"mode\":\"gateway\"}"
+    }
+
+    /// `usage.cost` params for the trailing-7-day window: a gateway-summed `{"days":7}` window, the same
+    /// timezone-correct, gap-immune basis as `todayParamsJSON`. Used instead of slicing the sparse 30-day
+    /// `daily` series, which (no zero-fill) would reach further back than 7 calendar days when recent
+    /// days have no spend.
+    private static func last7ParamsJSON() -> String {
+        "{\"days\":7,\"agentScope\":\"all\",\"mode\":\"gateway\"}"
     }
 
     /// `sessions.usage` params: strict-validated by `SessionsUsageParamsSchema`
@@ -210,14 +234,17 @@ final class CostInsightsViewModel {
 
     // MARK: - Report assembly
 
-    /// Fold the `usage.cost` 30-day daily series + grand totals, the dedicated `{"days":1}` today
-    /// window, and the `sessions.usage` aggregates into the `CostReport` the screen renders. The 7d
-    /// total is summed from the 30-day daily series; today comes from its own gateway-scoped window so
-    /// it stays timezone-correct.
+    /// Fold the `usage.cost` 30-day daily series (trend) + grand total, the dedicated `{"days":1}` today
+    /// and `{"days":7}` 7-day window sums, and the `sessions.usage` aggregates into the `CostReport`.
+    /// Every window total is a gateway-scoped SUM (timezone-correct, gap-immune); `windowCost` over the
+    /// `daily` series is only a best-effort fallback when a dedicated call is absent. `previous` carries
+    /// the last-known today/7d values forward so a single failed window call doesn't read a false $0.
     private static func buildReport(
         summary: CostUsageSummaryLite,
         today: CostUsageSummaryLite?,
-        sessions: SessionsUsageResultLite?) -> CostReport
+        last7: CostUsageSummaryLite?,
+        sessions: SessionsUsageResultLite?,
+        previous: CostReport?) -> CostReport
     {
         let daily = (summary.daily ?? []).sorted { $0.date < $1.date }
         let trend = Self.trendPoints(from: daily)
@@ -225,10 +252,13 @@ final class CostInsightsViewModel {
         // Today's spend/tokens come from a dedicated gateway-scoped `{"days":1}` window SUM, not a
         // client-keyed slice of the 30-day series: the rollup's day keys are formatted in the gateway
         // host's timezone (`formatDayKey`), so a UTC key recomputed here would miss the bucket whenever
-        // the gateway isn't on UTC. Fall back to 0 (not a stale daily entry) when that call is absent.
-        let todayUSD = today?.totalCost ?? 0
-        let todayTokens = today?.totalTokens ?? 0
-        let last7USD = Self.windowCost(daily, trailingDays: 7)
+        // the gateway isn't on UTC. When the call is absent, carry the prior report's value forward (so
+        // a transient failure never clears an over-budget banner); only `nil` when never loaded.
+        let todayUSD = today?.totalCost ?? previous?.todayUSD
+        let todayTokens = today?.totalTokens ?? previous?.todayTokens
+        // 7-day window: prefer the gateway sum; fall back to the prior value, then the sparse-series sum.
+        let last7USD = last7?.totalCost ?? previous?.last7USD ?? Self.windowCost(daily, trailingDays: 7)
+        let last7Tokens = last7?.totalTokens ?? previous?.last7Tokens ?? 0
         let last30USD = summary.totalCost ?? Self.windowCost(daily, trailingDays: 30)
         let last30Tokens = summary.totalTokens ?? daily.reduce(0) { $0 + ($1.totalTokens ?? 0) }
 
@@ -242,6 +272,7 @@ final class CostInsightsViewModel {
             last7USD: last7USD,
             last30USD: last30USD,
             todayTokens: todayTokens,
+            last7Tokens: last7Tokens,
             last30Tokens: last30Tokens,
             dailyTrend: trend,
             byModel: byModel,
@@ -291,14 +322,19 @@ final class CostInsightsViewModel {
         }
         var days: [ModelMixDay] = []
         for (dayKey, entries) in byDay {
-            // Distinct model labels only; a single model running multiple times is not a mix.
-            let labelled = entries
-                .sorted { ($0.cost ?? 0) > ($1.cost ?? 0) }
-                .compactMap { Self.modelLabel($0) }
-            var seen = Set<String>()
-            let distinct = labelled.filter { seen.insert($0).inserted }
-            guard distinct.count > 1, let date = Self.date(from: dayKey) else { continue }
-            days.append(ModelMixDay(dayKey: dayKey, date: date, models: distinct))
+            // Dedupe on the RAW (provider, model) pair, not the display label: the same model name under
+            // two providers is a genuine mix that a label-only key (which strips the provider) would miss.
+            // A single model running multiple times collapses to one key and is not a mix.
+            let sorted = entries.sorted { ($0.cost ?? 0) > ($1.cost ?? 0) }
+            var seenKeys = Set<String>()
+            var distinctModels: [String] = []
+            for entry in sorted {
+                let key = "\(entry.provider ?? "")\u{1}\(entry.model ?? "")"
+                guard seenKeys.insert(key).inserted, let label = Self.modelLabel(entry) else { continue }
+                distinctModels.append(label)
+            }
+            guard seenKeys.count > 1, distinctModels.count > 1, let date = Self.date(from: dayKey) else { continue }
+            days.append(ModelMixDay(dayKey: dayKey, date: date, models: distinctModels))
         }
         return days.sorted { $0.dayKey > $1.dayKey }
     }

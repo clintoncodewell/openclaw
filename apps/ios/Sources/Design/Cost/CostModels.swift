@@ -249,14 +249,18 @@ struct ModelMixDay: Identifiable {
 }
 
 /// The fully assembled dashboard payload the screen renders. Combines the `usage.cost` 30-day summary
-/// (top totals + trend) with the `sessions.usage` aggregates (per-model, per-agent, model-mix). Window
-/// totals (today / 7d / 30d) are sliced client-side from the single 30-day `daily` series so the
-/// screen issues exactly two gateway calls, not four.
+/// (top totals + trend) with the `sessions.usage` aggregates (per-model, per-agent, model-mix). The
+/// today / 7d / 30d window totals each come from their OWN gateway-scoped `usage.cost` window sum
+/// (`{"days":N,"mode":"gateway"}`), not a client-side slice of the sparse `daily` series — the series
+/// has no zero-fill, so slicing it drifts whenever recent days have no spend. `todayUSD`/`todayTokens`
+/// are optional: a failed today call leaves them `nil` ("unavailable") rather than a false `0` that
+/// would silently clear an over-budget banner.
 struct CostReport {
-    let todayUSD: Double
+    let todayUSD: Double?
     let last7USD: Double
     let last30USD: Double
-    let todayTokens: Int
+    let todayTokens: Int?
+    let last7Tokens: Int
     let last30Tokens: Int
     let dailyTrend: [CostTrendPoint]
     let byModel: [ModelUsageLite]

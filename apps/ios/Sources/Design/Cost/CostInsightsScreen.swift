@@ -138,7 +138,7 @@ struct CostInsightsScreen: View {
 
     private func totalsStrip(_ report: CostReport) -> some View {
         let spend = self.viewModel.spend(for: self.viewModel.range)
-        let tokens = self.viewModel.range == .today ? report.todayTokens : report.last30Tokens
+        let tokens = self.tokens(for: self.viewModel.range, report: report)
         let metrics = [
             ProMetric(
                 icon: "dollarsign.circle.fill",
@@ -157,6 +157,16 @@ struct CostInsightsScreen: View {
                 color: OpenClawBrand.ok),
         ]
         return ProMetricGrid(metrics: metrics)
+    }
+
+    /// Token count for the selected range's metric tile. Each window has its own count so the 7-day view
+    /// no longer borrows the 30-day total; `todayTokens` coerces its "unavailable" nil to 0 for display.
+    private func tokens(for range: CostRange, report: CostReport) -> Int {
+        switch range {
+        case .today: report.todayTokens ?? 0
+        case .sevenDay: report.last7Tokens
+        case .thirtyDay: report.last30Tokens
+        }
     }
 
     // MARK: - Trend chart
@@ -374,11 +384,19 @@ private struct CostBudgetCard: View {
                 if self.budget.anyBudgetSet {
                     VStack(alignment: .leading, spacing: 12) {
                         if self.budget.dailyEnabled {
-                            CostBudgetRow(
-                                label: "Daily",
-                                spend: self.report.todayUSD,
-                                cap: self.budget.dailyUSD,
-                                status: self.budget.dailyStatus(spend: self.report.todayUSD))
+                            // `todayUSD == nil` means the today call failed this load; show the row as
+                            // unavailable rather than a misleading $0/under-budget against the daily cap.
+                            if let todaySpend = self.report.todayUSD {
+                                CostBudgetRow(
+                                    label: "Daily",
+                                    spend: todaySpend,
+                                    cap: self.budget.dailyUSD,
+                                    status: self.budget.dailyStatus(spend: todaySpend))
+                            } else {
+                                CostInlineNote(
+                                    icon: "exclamationmark.arrow.circlepath",
+                                    text: "Today's spend is unavailable — pull to refresh.")
+                            }
                         }
                         if self.budget.monthlyEnabled {
                             CostBudgetRow(
@@ -402,8 +420,10 @@ private struct CostBudgetCard: View {
     /// Banner copy for the worst over-budget cap, or nil when neither cap is exceeded. Daily takes
     /// precedence over the 30-day cap because it is the more immediate signal.
     private var overBudgetText: String? {
-        let daily = self.budget.dailyStatus(spend: self.report.todayUSD)
-        if case let .over(_, overBy) = daily {
+        // Only evaluate the daily cap when today's spend actually loaded; a nil (failed call) must not
+        // be treated as $0, which would suppress a real overage.
+        if let todaySpend = self.report.todayUSD,
+           case let .over(_, overBy) = self.budget.dailyStatus(spend: todaySpend) {
             return "Over the daily budget by \(CostFormatting.currency(overBy))."
         }
         let monthly = self.budget.monthlyStatus(spend: self.report.last30USD)

@@ -18,6 +18,9 @@ struct CommandCenterTab: View {
     /// `{"days":1}` — the same primary RPC the Cost dashboard uses — so the card and the screen agree
     /// without a second source of truth. `nil` until the first successful fetch / while offline.
     @State private var costTodayUSD: Double?
+    /// 30-day spend (USD) for the Cost card's monthly-budget pill, fetched alongside today's spend so a
+    /// monthly-only cap overage surfaces on the card even when no daily cap is set. `nil` until loaded.
+    @State private var costMonthUSD: Double?
     /// Client-side budget caps, shared with the Cost dashboard. Drives the over/near-budget pill.
     @State private var budget = CostBudgetStore()
     var headerTitle: String = "OpenClaw"
@@ -279,12 +282,15 @@ struct CommandCenterTab: View {
         return "\(CostFormatting.currency(today)) today"
     }
 
-    /// Over/near-budget pill for the Cost card, mirroring the inbox badge style. Only shown when a
-    /// budget is set, alerts are on, today's spend has loaded, and the daily cap is at/over `0.8`.
+    /// Over/near-budget pill for the Cost card, mirroring the inbox badge style. Shown when any budget is
+    /// set, alerts are on, and the worst of the daily/monthly caps is at/over `0.8`. Uses `worstStatus`
+    /// so a monthly-only cap overage surfaces even with no daily cap; an unloaded spend coerces to 0,
+    /// which can only under-report (never falsely fire), and reconciles on the next refresh.
     private var costBudgetPill: (label: String, color: Color)? {
-        guard self.gatewayConnected, self.budget.alertsEnabled, self.budget.dailyEnabled else { return nil }
-        guard let today = self.costTodayUSD else { return nil }
-        let status = self.budget.dailyStatus(spend: today)
+        guard self.gatewayConnected, self.budget.alertsEnabled, self.budget.anyBudgetSet else { return nil }
+        let status = self.budget.worstStatus(
+            todaySpend: self.costTodayUSD ?? 0,
+            monthSpend: self.costMonthUSD ?? 0)
         guard status.isNearOrOver else { return nil }
         return (label: status.pillLabel, color: status.color)
     }
@@ -626,17 +632,29 @@ struct CommandCenterTab: View {
     private func refreshCostToday() async {
         guard self.scenePhase == .active, self.gatewayConnected else {
             if self.costTodayUSD != nil { self.costTodayUSD = nil }
+            if self.costMonthUSD != nil { self.costMonthUSD = nil }
             return
         }
-        do {
-            let data = try await self.appModel.operatorSession.request(
-                method: "usage.cost",
-                paramsJSON: "{\"days\":1,\"agentScope\":\"all\",\"mode\":\"gateway\"}",
-                timeoutSeconds: 12)
-            let summary = try JSONDecoder().decode(CostUsageSummaryLite.self, from: data)
+        // Two gateway-scoped window sums: today (daily-cap pill + subtitle) and 30d (monthly-cap pill),
+        // both `mode: gateway` / `agentScope: all` to match the dashboard. Each updates independently so
+        // one failing leaves the other's last-known value intact.
+        async let todayThrowing = self.appModel.operatorSession.request(
+            method: "usage.cost",
+            paramsJSON: "{\"days\":1,\"agentScope\":\"all\",\"mode\":\"gateway\"}",
+            timeoutSeconds: 12)
+        async let monthThrowing = self.appModel.operatorSession.request(
+            method: "usage.cost",
+            paramsJSON: "{\"range\":\"30d\",\"agentScope\":\"all\",\"mode\":\"gateway\"}",
+            timeoutSeconds: 12)
+        let todayData = try? await todayThrowing
+        let monthData = try? await monthThrowing
+        if let data = todayData,
+           let summary = try? JSONDecoder().decode(CostUsageSummaryLite.self, from: data) {
             self.costTodayUSD = summary.totalCost ?? 0
-        } catch {
-            // Leave the last known spend on a transient failure; the next foreground refresh reconciles.
+        }
+        if let data = monthData,
+           let summary = try? JSONDecoder().decode(CostUsageSummaryLite.self, from: data) {
+            self.costMonthUSD = summary.totalCost ?? 0
         }
     }
 
