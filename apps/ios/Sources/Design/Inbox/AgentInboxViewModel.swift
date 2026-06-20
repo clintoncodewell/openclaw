@@ -102,14 +102,21 @@ final class AgentInboxViewModel {
         self.state = remaining.isEmpty ? .empty : .loaded(remaining)
 
         let result = await appModel.resolveExecApproval(approvalId: approval.id, decision: decision)
-        self.resolvingIDs.remove(approval.id)
 
         if result == .resolved {
-            // Reconcile against the gateway (the `exec.approval.resolved` broadcast also triggers a
-            // reload via the screen's event subscription; this covers the non-foregrounded path).
+            // Keep the id in `resolvingIDs` across the reconciling load so a tap queued during the
+            // optimistic-removal window can't fire a second, conflicting resolve before the refetched
+            // list arrives. `load` reconciles `resolvingIDs` against the fresh ids (dropping this one
+            // once the gateway no longer lists it); clearing here is the backstop if that load failed.
+            // (The `exec.approval.resolved` broadcast also triggers a reload via the screen's event
+            // subscription; this covers the non-foregrounded path.)
             await self.load(appModel: appModel, force: true)
+            self.resolvingIDs.remove(approval.id)
             return
         }
+
+        // Failed / unavailable: re-enable the row so the user can retry or pick another action.
+        self.resolvingIDs.remove(approval.id)
 
         // Not resolved: the command is still pending on the gateway, so roll the optimistic removal
         // back and surface why inline. `.allowAlwaysUnavailable` is not a failure — the gateway
