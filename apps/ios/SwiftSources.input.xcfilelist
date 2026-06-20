@@ -46,6 +46,10 @@ Sources/Design/Briefs/BriefDetailScreen.swift
 Sources/Design/Inbox/AgentInboxScreen.swift
 Sources/Design/Inbox/AgentInboxViewModel.swift
 Sources/Design/Inbox/InboxModels.swift
+Sources/Design/Cost/CostBudgetStore.swift
+Sources/Design/Cost/CostInsightsScreen.swift
+Sources/Design/Cost/CostInsightsViewModel.swift
+Sources/Design/Cost/CostModels.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift

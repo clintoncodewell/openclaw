@@ -14,6 +14,12 @@ struct CommandCenterTab: View {
     /// `exec.approval.list` path the Agent Inbox uses and refreshed from the live approval events, so
     /// the badge stays in sync without standing up a second source of truth.
     @State private var inboxPendingCount: Int = 0
+    /// Today's spend (USD) for the Cost card subtitle / budget badge, fetched from `usage.cost`
+    /// `{"days":1}` — the same primary RPC the Cost dashboard uses — so the card and the screen agree
+    /// without a second source of truth. `nil` until the first successful fetch / while offline.
+    @State private var costTodayUSD: Double?
+    /// Client-side budget caps, shared with the Cost dashboard. Drives the over/near-budget pill.
+    @State private var budget = CostBudgetStore()
     var headerTitle: String = "OpenClaw"
     var headerLeadingAction: OpenClawSidebarHeaderAction?
     var showsHeaderMark: Bool = true
@@ -49,6 +55,7 @@ struct CommandCenterTab: View {
                             self.gatewayCard
                             self.inboxCard
                             self.briefsCard
+                            self.costCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
                                 containerWidth: geometry.size.width)
@@ -75,11 +82,17 @@ struct CommandCenterTab: View {
             }
             .navigationBarHidden(true)
         }
+        // Share this one store with the pushed Cost dashboard so a budget edited in its sheet updates
+        // this card's pill/subtitle live, instead of each surface owning an independent in-memory copy.
+        .environment(\.costBudgetStore, self.budget)
         .task(id: self.recentSessionsRefreshID) {
             await self.refreshRecentSessionsIfNeeded()
         }
         .task(id: self.inboxBadgeRefreshID) {
             await self.refreshInboxPendingCount()
+        }
+        .task(id: self.inboxBadgeRefreshID) {
+            await self.refreshCostToday()
         }
         .task {
             await self.observeInboxPendingCount()
@@ -218,6 +231,62 @@ struct CommandCenterTab: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var costCard: some View {
+        NavigationLink {
+            CostInsightsScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "chart.line.uptrend.xyaxis", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Cost")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.costSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if let pill = self.costBudgetPill {
+                        Text(pill.label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(pill.color, in: Capsule())
+                            .accessibilityLabel("Budget \(pill.label)")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var costSubtitle: String {
+        guard self.gatewayConnected else {
+            return "Connect to the gateway to view spend"
+        }
+        guard let today = self.costTodayUSD else {
+            return "Spend & usage analytics"
+        }
+        return "\(CostFormatting.currency(today)) today"
+    }
+
+    /// Over/near-budget pill for the Cost card, mirroring the inbox badge style. Only shown when a
+    /// budget is set, alerts are on, today's spend has loaded, and the daily cap is at/over `0.8`.
+    private var costBudgetPill: (label: String, color: Color)? {
+        guard self.gatewayConnected, self.budget.alertsEnabled, self.budget.dailyEnabled else { return nil }
+        guard let today = self.costTodayUSD else { return nil }
+        let status = self.budget.dailyStatus(spend: today)
+        guard status.isNearOrOver else { return nil }
+        return (label: status.pillLabel, color: status.color)
     }
 
     private var inboxCard: some View {
@@ -544,6 +613,30 @@ struct CommandCenterTab: View {
         } catch {
             // Leave the last known count on a transient failure; the next foreground / event refresh
             // reconciles it.
+        }
+    }
+
+    /// Fetch today's spend for the Cost card subtitle / budget badge via
+    /// `usage.cost {"days":1,"agentScope":"all","mode":"gateway"}` — byte-for-byte the same params the
+    /// Cost dashboard uses for its "today" slice — so the card and the screen agree on the number.
+    /// `mode: gateway` scopes the single-day window to the gateway host's local day (the same basis the
+    /// daily rollup keys use), and `agentScope: all` matches the dashboard's all-agents total; without
+    /// both, the card could show a non-zero "today" while the dashboard read 0 from a UTC-keyed slice.
+    /// Cleared when offline; the last known value is kept on a transient failure.
+    private func refreshCostToday() async {
+        guard self.scenePhase == .active, self.gatewayConnected else {
+            if self.costTodayUSD != nil { self.costTodayUSD = nil }
+            return
+        }
+        do {
+            let data = try await self.appModel.operatorSession.request(
+                method: "usage.cost",
+                paramsJSON: "{\"days\":1,\"agentScope\":\"all\",\"mode\":\"gateway\"}",
+                timeoutSeconds: 12)
+            let summary = try JSONDecoder().decode(CostUsageSummaryLite.self, from: data)
+            self.costTodayUSD = summary.totalCost ?? 0
+        } catch {
+            // Leave the last known spend on a transient failure; the next foreground refresh reconciles.
         }
     }
 
