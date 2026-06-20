@@ -52,6 +52,25 @@ enum TraceFormatting {
     /// secret-looking keys redacted to "***". Returns nil when the payload is empty/absent. The redaction
     /// walks the value tree first, then hands a sanitized object to `JSONSerialization` so no secret ever
     /// reaches the rendered string.
+    /// Cheap presence check: is there renderable content to expand? Used to decide a span's
+    /// expand chevron WITHOUT building the (potentially large) pretty-printed JSON, so a collapsed
+    /// span on a long transcript pays nothing. Only inspects the top-level shape, never recurses.
+    static func hasContent(_ value: AnyCodable?) -> Bool {
+        guard let raw = value?.value else { return false }
+        switch raw {
+        case let string as String:
+            return !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case let array as [Any]:
+            return !array.isEmpty
+        case let object as [String: Any]:
+            return !object.isEmpty
+        case is NSNull:
+            return false
+        default:
+            return true // numbers / bools etc. are renderable scalars
+        }
+    }
+
     static func prettyJSON(_ value: AnyCodable?) -> String? {
         guard let raw = value?.value else { return nil }
         let sanitized = self.redact(raw)

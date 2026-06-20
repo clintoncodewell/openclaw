@@ -117,8 +117,15 @@ final class RunTimelineViewModel {
     private func fetchHistory(appModel: NodeAppModel) async -> [OpenClawChatMessage]? {
         let payload: OpenClawChatHistoryPayload
         do {
-            let transport = appModel.makeChatTransport()
-            payload = try await transport.requestHistory(sessionKey: self.sessionKey)
+            // Call `chat.history` directly rather than `transport.requestHistory`, which sends only
+            // `{sessionKey}` and lets the gateway cap the transcript at its default 200 messages —
+            // silently truncating long runs. Sending `limit` pulls the full transcript up to the
+            // gateway maximum (1000), so the timeline isn't cut off mid-run.
+            let data = try await appModel.operatorSession.request(
+                method: "chat.history",
+                paramsJSON: Self.historyParamsJSON(sessionKey: self.sessionKey, limit: Self.historyLimit),
+                timeoutSeconds: 15)
+            payload = try JSONDecoder().decode(OpenClawChatHistoryPayload.self, from: data)
         } catch {
             return nil
         }
@@ -151,6 +158,17 @@ final class RunTimelineViewModel {
             return []
         }
         return series.points ?? []
+    }
+
+    /// `chat.history` params (`logs-chat.ts:30`): `sessionKey` required, `limit` <= 1000. Encoded as a
+    /// literal object with the key JSON-escaped through `JSONEncoder` so the casing/escaping is exact.
+    private static func historyParamsJSON(sessionKey: String, limit: Int) -> String {
+        guard let keyData = try? JSONEncoder().encode(sessionKey),
+              let keyJSON = String(data: keyData, encoding: .utf8)
+        else {
+            return "{\"limit\":\(limit)}"
+        }
+        return "{\"sessionKey\":\(keyJSON),\"limit\":\(limit)}"
     }
 
     /// `sessions.usage.timeseries` params: `key` is required (`usage.ts:1625`). Encoded as a literal

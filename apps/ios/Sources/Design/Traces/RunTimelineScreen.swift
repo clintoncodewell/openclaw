@@ -46,7 +46,9 @@ struct RunTimelineScreen: View {
         ZStack {
             CommandControlBackground()
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                // LazyVStack so a long run's turn cards / spans render only as they scroll into view —
+                // a large transcript otherwise builds every span (and its JSON) up front.
+                LazyVStack(alignment: .leading, spacing: 14) {
                     self.content
                 }
                 .padding(.top, 14)
@@ -288,7 +290,8 @@ private struct FlatTimelineCard: View {
 
     var body: some View {
         CommandPanel(padding: 12) {
-            VStack(alignment: .leading, spacing: 0) {
+            // LazyVStack: the flat view can hold the entire run's spans; render them on demand.
+            LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(self.spans.enumerated()), id: \.element.id) { index, span in
                     SpanRailRow(
                         span: span,
@@ -407,7 +410,8 @@ private struct SpanRailRow: View {
 
     private func toolCallSpan(name: String, arguments: AnyCodable?) -> some View {
         let display = ToolDisplayRegistry.resolve(name: name, args: arguments)
-        let prettyArgs = TraceFormatting.prettyJSON(arguments)
+        // Cheap presence check for the chevron; the expensive pretty-print runs only once expanded.
+        let hasArgs = TraceFormatting.hasContent(arguments)
         return Button {
             withAnimation(.snappy) { self.expanded.toggle() }
         } label: {
@@ -418,7 +422,7 @@ private struct SpanRailRow: View {
                     Text(display.title)
                         .font(.footnote.weight(.semibold))
                     Spacer(minLength: 6)
-                    if prettyArgs != nil {
+                    if hasArgs {
                         Image(systemName: self.expanded ? "chevron.up" : "chevron.down")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.tertiary)
@@ -430,7 +434,7 @@ private struct SpanRailRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                if self.expanded, let prettyArgs {
+                if self.expanded, let prettyArgs = TraceFormatting.prettyJSON(arguments) {
                     self.jsonBlock(prettyArgs, caption: "Arguments")
                 }
             }
@@ -442,9 +446,12 @@ private struct SpanRailRow: View {
     }
 
     private func toolResultSpan(content: AnyCodable?, text: String?, isError: Bool) -> some View {
-        let prettyResult = TraceFormatting.prettyJSON(content)
-        let bodyText = self.resultText(content: content, text: text)
         let tint = isError ? OpenClawBrand.danger : OpenClawBrand.ok
+        // Prefer plain text for the cheap collapsed preview; the structured-result JSON is built lazily
+        // (only on expand), so a long transcript doesn't pretty-print every result up front.
+        let plainText = (text?.isEmpty == false) ? text : nil
+        let hasStructured = TraceFormatting.hasContent(content)
+        let isExpandable = hasStructured || (plainText.map { $0.count > 120 } ?? false)
         return Button {
             withAnimation(.snappy) { self.expanded.toggle() }
         } label: {
@@ -457,19 +464,13 @@ private struct SpanRailRow: View {
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(isError ? OpenClawBrand.danger : .primary)
                     Spacer(minLength: 6)
-                    if prettyResult != nil || (bodyText.map { $0.count > 120 } ?? false) {
+                    if isExpandable {
                         Image(systemName: self.expanded ? "chevron.up" : "chevron.down")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.tertiary)
                     }
                 }
-                if let prettyResult, self.expanded {
-                    self.jsonBlock(prettyResult, caption: "Result")
-                } else if let bodyText, !bodyText.isEmpty {
-                    OpenClawProseView(text: bodyText)
-                        .textSelection(.enabled)
-                        .lineLimit(self.expanded ? nil : 4)
-                }
+                self.resultBody(plainText: plainText, content: content, hasStructured: hasStructured)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
@@ -527,9 +528,28 @@ private struct SpanRailRow: View {
 
     /// Best-effort textual rendering of a result: prefer the plain `text`, else a compact string from the
     /// structured content (so a text-only render path still shows something before expansion).
-    private func resultText(content: AnyCodable?, text: String?) -> String? {
-        if let text, !text.isEmpty { return text }
-        return TraceFormatting.prettyJSON(content)
+    /// Result body, computed lazily: when expanded, prefer the structured JSON (built now, on demand),
+    /// else the full text; when collapsed, a cheap 4-line text preview, or a one-line "tap to expand"
+    /// hint for a structured-only result so we never pretty-print a large payload just to preview it.
+    @ViewBuilder
+    private func resultBody(plainText: String?, content: AnyCodable?, hasStructured: Bool) -> some View {
+        if self.expanded {
+            if hasStructured, let prettyResult = TraceFormatting.prettyJSON(content) {
+                self.jsonBlock(prettyResult, caption: "Result")
+            } else if let plainText {
+                OpenClawProseView(text: plainText)
+                    .textSelection(.enabled)
+            }
+        } else if let plainText {
+            OpenClawProseView(text: plainText)
+                .textSelection(.enabled)
+                .lineLimit(4)
+        } else if hasStructured {
+            Text("Structured result — tap to expand")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     private var tokensLabel: String? {
