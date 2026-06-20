@@ -39,6 +39,13 @@ Sources/Design/IPadWorkboardScreen.swift
 Sources/Design/OpenClawDocsScreen.swift
 Sources/Design/RootTabsPhoneControlHub.swift
 Sources/Design/SettingsChannelsDestination.swift
+Sources/Design/Briefs/BriefsInboxScreen.swift
+Sources/Design/Briefs/BriefsInboxViewModel.swift
+Sources/Design/Briefs/BriefsModels.swift
+Sources/Design/Briefs/BriefDetailScreen.swift
+Sources/Design/Inbox/AgentInboxScreen.swift
+Sources/Design/Inbox/AgentInboxViewModel.swift
+Sources/Design/Inbox/InboxModels.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift

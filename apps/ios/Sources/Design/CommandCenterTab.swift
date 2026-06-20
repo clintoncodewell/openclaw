@@ -10,6 +10,10 @@ struct CommandCenterTab: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var defaultChatSessionEntry: OpenClawChatSessionEntry?
     @State private var recentChatSessions: [OpenClawChatSessionEntry] = []
+    /// Pending exec-approval count for the Inbox card badge. Fetched from the same
+    /// `exec.approval.list` path the Agent Inbox uses and refreshed from the live approval events, so
+    /// the badge stays in sync without standing up a second source of truth.
+    @State private var inboxPendingCount: Int = 0
     var headerTitle: String = "OpenClaw"
     var headerLeadingAction: OpenClawSidebarHeaderAction?
     var showsHeaderMark: Bool = true
@@ -43,6 +47,7 @@ struct CommandCenterTab: View {
                         VStack(alignment: .leading, spacing: 14) {
                             self.header
                             self.gatewayCard
+                            self.inboxCard
                             self.briefsCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
@@ -72,6 +77,12 @@ struct CommandCenterTab: View {
         }
         .task(id: self.recentSessionsRefreshID) {
             await self.refreshRecentSessionsIfNeeded()
+        }
+        .task(id: self.inboxBadgeRefreshID) {
+            await self.refreshInboxPendingCount()
+        }
+        .task {
+            await self.observeInboxPendingCount()
         }
     }
 
@@ -207,6 +218,56 @@ struct CommandCenterTab: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var inboxCard: some View {
+        NavigationLink {
+            AgentInboxScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "tray.full.fill", color: OpenClawBrand.accentHot)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Inbox")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.inboxSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if self.gatewayConnected, self.inboxPendingCount > 0 {
+                        Text("\(self.inboxPendingCount)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(OpenClawBrand.accentHot, in: Capsule())
+                            .accessibilityLabel("\(self.inboxPendingCount) pending approvals")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var inboxSubtitle: String {
+        guard self.gatewayConnected else {
+            return "Connect to the gateway to review approvals"
+        }
+        switch self.inboxPendingCount {
+        case 0:
+            return "Inbox zero — nothing waiting"
+        case 1:
+            return "1 decision needs you"
+        default:
+            return "\(self.inboxPendingCount) decisions need you"
+        }
     }
 
     private func gatewayFact(icon: String, title: String, value: String, color: Color) -> some View {
@@ -403,6 +464,15 @@ struct CommandCenterTab: View {
         self.appModel.isLocalChatFixtureEnabled || self.appModel.isOperatorGatewayConnected
     }
 
+    /// Re-fetch the inbox badge whenever the app foregrounds or the gateway connection flips, mirroring
+    /// the recent-sessions refresh trigger so the badge is correct on first paint and after reconnect.
+    private var inboxBadgeRefreshID: String {
+        [
+            self.gatewayConnected ? "connected" : "offline",
+            self.scenePhase == .active ? "active" : "inactive",
+        ].joined(separator: ":")
+    }
+
     private var sessionListMode: String {
         self.appModel.chatTransportModeID
     }
@@ -455,6 +525,41 @@ struct CommandCenterTab: View {
         } catch {
             self.defaultChatSessionEntry = nil
             self.recentChatSessions = []
+        }
+    }
+
+    /// Fetch the pending-approval count for the Inbox badge via the same `exec.approval.list` path the
+    /// Agent Inbox uses (bare array, no params), keeping a single fetch contract. Zeroed when offline.
+    private func refreshInboxPendingCount() async {
+        guard self.scenePhase == .active, self.gatewayConnected else {
+            if self.inboxPendingCount != 0 { self.inboxPendingCount = 0 }
+            return
+        }
+        do {
+            let data = try await self.appModel.operatorSession.request(
+                method: "exec.approval.list",
+                paramsJSON: "{}",
+                timeoutSeconds: 12)
+            self.inboxPendingCount = InboxApproval.decodeList(from: data).count
+        } catch {
+            // Leave the last known count on a transient failure; the next foreground / event refresh
+            // reconciles it.
+        }
+    }
+
+    /// Keep the badge live while foregrounded: the gateway broadcasts `exec.approval.requested` /
+    /// `exec.approval.resolved` to approvals-scoped clients, so a request raised or resolved anywhere
+    /// (this app, the watch, a notification action) bumps the badge without polling.
+    private func observeInboxPendingCount() async {
+        let stream = await self.appModel.operatorSession.subscribeServerEvents(bufferingNewest: 200)
+        for await event in stream {
+            if Task.isCancelled { return }
+            switch event.event {
+            case "exec.approval.requested", "exec.approval.resolved":
+                await self.refreshInboxPendingCount()
+            default:
+                continue
+            }
         }
     }
 

@@ -4329,6 +4329,31 @@ extension NodeAppModel {
         }
     }
 
+    /// Reusable resolve entry point for the Agent Inbox. Delegates to the single canonical resolver
+    /// (`resolveExecApprovalNotificationDecision`) so the inbox shares every side effect the watch /
+    /// notification path already owns: `exec.approval.resolve` RPC, notification cleanup, and watch
+    /// sync. Unlike the notification path — which can only dismiss its surface — the inbox can keep an
+    /// actionable row, so each gateway outcome maps to a distinct result the caller acts on.
+    func resolveExecApproval(approvalId: String, decision: String) async -> InboxResolveResult {
+        let outcome = await self.resolveExecApprovalNotificationDecision(
+            approvalId: approvalId,
+            decision: decision,
+            sourceReason: "inbox")
+        switch outcome {
+        // `.resolved` (we resolved it) and `.stale` (already gone on the gateway) both mean the row is
+        // no longer actionable — drop it.
+        case .resolved, .stale:
+            return .resolved
+        // `.unavailable` is allow-always rejection: the gateway responded INVALID_REQUEST and never
+        // resolved the record, so the command is STILL pending. Keep the row so the user can pick
+        // Approve or Ignore instead of seeing it silently vanish as "approved always".
+        case .unavailable:
+            return .allowAlwaysUnavailable
+        case .failed:
+            return .transientFailure
+        }
+    }
+
     private func resolveExecApprovalNotificationDecision(
         approvalId: String,
         decision: String,
