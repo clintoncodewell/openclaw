@@ -43,6 +43,7 @@ struct CommandCenterTab: View {
                         VStack(alignment: .leading, spacing: 14) {
                             self.header
                             self.gatewayCard
+                            self.briefsCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
                                 containerWidth: geometry.size.width)
@@ -176,6 +177,35 @@ struct CommandCenterTab: View {
                 }
             }
         }
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var briefsCard: some View {
+        NavigationLink {
+            BriefsInboxScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "doc.text.magnifyingglass", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Briefs")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.gatewayConnected
+                            ? "Scheduled reports from every job"
+                            : "Connect to the gateway to view reports")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
         .padding(.horizontal, OpenClawProMetric.pagePadding)
     }
 
