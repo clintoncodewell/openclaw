@@ -310,8 +310,9 @@ public struct OpenClawChatView: View {
         }
 
         if !self.viewModel.pendingToolCalls.isEmpty {
+            // Not .equatable(): this bubble owns interactive @State (expand/collapse), so a
+            // prop-only equality gate would be a confusing invariant for marginal benefit.
             ChatPendingToolsBubble(toolCalls: self.viewModel.pendingToolCalls)
-                .equatable()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
 
