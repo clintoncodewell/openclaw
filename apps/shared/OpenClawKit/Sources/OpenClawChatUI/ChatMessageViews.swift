@@ -568,7 +568,9 @@ private struct ToolTraceBubble: View {
         let noun = count == 1 ? "tool call" : "tool calls"
         // When collapsed, hint at which tools ran so the header is meaningful at a glance.
         let names = self.rows.prefix(2).map { row -> String in
-            let display = ToolDisplayRegistry.resolve(name: row.call?.name ?? "tool", args: row.call?.arguments)
+            // Result-only rows (interrupted/standalone) carry the name on the result, not the call.
+            let display = ToolDisplayRegistry.resolve(
+                name: row.call?.name ?? row.result?.name ?? "tool", args: row.call?.arguments)
             return "\(display.emoji) \(display.title)"
         }
         guard !self.expanded, !names.isEmpty else {
@@ -715,10 +717,14 @@ private struct ToolTraceRow: View {
 // Renders tool-call arguments as a compact single-line JSON-ish summary, truncating long values.
 enum ToolArgumentsFormatter {
     private static let maxLength = 200
+    // Stop walking the payload once we've produced ~this many chars: a huge nested arg shouldn't
+    // fully stringify on the main actor just to be truncated to maxLength for display.
+    private static let renderBudget = 512
 
     static func format(_ args: AnyCodable?) -> String? {
         guard let value = args?.value else { return nil }
-        let rendered = self.render(value)
+        var budget = self.renderBudget
+        let rendered = self.render(value, budget: &budget)
         let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != "{}", trimmed != "[]" else { return nil }
         if trimmed.count > self.maxLength {
@@ -727,26 +733,55 @@ enum ToolArgumentsFormatter {
         return trimmed
     }
 
-    private static func render(_ value: Any) -> String {
+    // Keys whose values are likely secrets — show "***" rather than rendering them into chat history.
+    private static func isSensitiveKey(_ key: String) -> Bool {
+        let k = key.lowercased()
+        return ["token", "secret", "password", "passwd", "apikey", "api_key", "authorization", "bearer", "credential"]
+            .contains { k.contains($0) }
+    }
+
+    private static func render(_ value: Any, budget: inout Int) -> String {
+        if budget <= 0 { return "…" }
         switch value {
         case let dict as [String: AnyCodable]:
-            let parts = dict.sorted { $0.key < $1.key }.map { "\($0.key): \(self.render($0.value.value))" }
+            var parts: [String] = []
+            for (key, val) in dict.sorted(by: { $0.key < $1.key }) {
+                if budget <= 0 { parts.append("…"); break }
+                budget -= key.count + 2
+                if self.isSensitiveKey(key) {
+                    parts.append("\(key): ***")
+                } else {
+                    parts.append("\(key): \(self.render(val.value, budget: &budget))")
+                }
+            }
             return parts.joined(separator: ", ")
         case let array as [AnyCodable]:
-            return "[" + array.map { self.render($0.value) }.joined(separator: ", ") + "]"
+            var parts: [String] = []
+            for item in array {
+                if budget <= 0 { parts.append("…"); break }
+                parts.append(self.render(item.value, budget: &budget))
+            }
+            return "[" + parts.joined(separator: ", ") + "]"
         case let str as String:
             let firstLine = str.split(whereSeparator: \.isNewline).first.map(String.init) ?? str
-            return firstLine
+            let capped = firstLine.count > self.maxLength ? String(firstLine.prefix(self.maxLength)) + "…" : firstLine
+            budget -= capped.count
+            return capped
         case let bool as Bool:
+            budget -= 5
             return bool ? "true" : "false"
         case let int as Int:
-            return String(int)
+            let s = String(int); budget -= s.count; return s
         case let double as Double:
-            return String(double)
+            let s = String(double); budget -= s.count; return s
         case is NSNull:
+            budget -= 4
             return "null"
         default:
-            return String(describing: value)
+            let s = String(describing: value)
+            let capped = s.count > self.maxLength ? String(s.prefix(self.maxLength)) + "…" : s
+            budget -= capped.count
+            return capped
         }
     }
 }

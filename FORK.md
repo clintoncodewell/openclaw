@@ -48,21 +48,22 @@ swiftformat/swiftlint pre-build lint scripts, so you do **not** need those insta
 
 ## Connect to my gateway
 
-The app connects to an OpenClaw Gateway as a `role: node`. Two ways in:
+The app connects to an OpenClaw Gateway as a `role: node`. Two ways in. (Hostnames/IPs below are
+**placeholders** — this is a public fork; the real values are kept out of git.)
 
 ### A) Public — no Tailscale on the phone (recommended), via Tailscale Funnel
 
 The gateway is exposed publicly over TLS by Tailscale Funnel:
-**`wss://clinton-dev-vm-1.tail405bf7.ts.net:8443`** → proxied to the gateway's `localhost:18789`.
+**`wss://<your-vm>.<your-tailnet>.ts.net:8443`** → proxied to the gateway's `localhost:18789`.
 
-- In the app: **Settings → Gateway → manual host** → host `clinton-dev-vm-1.tail405bf7.ts.net`,
+- In the app: **Settings → Gateway → manual host** → host `<your-vm>.<your-tailnet>.ts.net`,
   port **`8443`**, TLS **on**.
 - Works from anywhere on the internet (verified: public-DNS → Funnel ingress → TLS 1.3 → gateway
   WS `101`). The real Let's Encrypt cert means the app can pin it and **autoconnect on launch**.
 - The security boundary is now the gateway's **pairing + token auth**, not the tailnet — the gateway
   is internet-reachable. That's the trade for not needing Tailscale on every client.
 
-Funnel admin (on `advisewell-vm`):
+Funnel admin (on `<vm-ssh-alias>`):
 ```bash
 tailscale funnel --bg --https=8443 http://127.0.0.1:18789   # enable (persists)
 tailscale funnel status                                      # show
@@ -74,14 +75,14 @@ serve mapping is untouched.
 
 ### B) Tailnet-only (Tailscale required on the client)
 
-host `100.65.245.83`, port `18789`, TLS **off** (the gateway's direct tailnet bind). The phone/Mac
+host `<gateway-tailnet-ip>`, port `18789`, TLS **off** (the gateway's direct tailnet bind). The phone/Mac
 must be on the tailnet; Bonjour discovery won't cross the tailnet, so use manual host/port.
 
 ### Pairing (once, either way)
 
 On the gateway: `openclaw pair qr` (or `openclaw pair` for a setup code), scan/enter it in the app,
 then approve: `openclaw devices approve <id>` + `openclaw nodes approve <id>`.
-(On the VM the CLI needs `--url ws://100.65.245.83:18789 --token <gateway token>`.)
+(On the VM the CLI needs `--url ws://<gateway-tailnet-ip>:18789 --token <gateway token>`.)
 
 Verify: chat/talk round-trips, and `node.invoke` capabilities (camera, screen, location, etc.) work
 in the foreground.
