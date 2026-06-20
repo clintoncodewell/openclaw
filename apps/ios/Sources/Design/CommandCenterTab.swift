@@ -59,6 +59,7 @@ struct CommandCenterTab: View {
                             self.inboxCard
                             self.briefsCard
                             self.costCard
+                            self.tracesCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
                                 containerWidth: geometry.size.width)
@@ -293,6 +294,37 @@ struct CommandCenterTab: View {
             monthSpend: self.costMonthUSD ?? 0)
         guard status.isNearOrOver else { return nil }
         return (label: status.pillLabel, color: status.color)
+    }
+
+    private var tracesCard: some View {
+        NavigationLink {
+            TraceListScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(
+                        systemName: "point.3.connected.trianglepath.dotted",
+                        color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Runs")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.gatewayConnected
+                            ? "Inspect recent runs & tool calls"
+                            : "Connect to the gateway to inspect runs")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
     }
 
     private var inboxCard: some View {

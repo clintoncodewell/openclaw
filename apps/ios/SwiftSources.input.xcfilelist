@@ -50,6 +50,12 @@ Sources/Design/Cost/CostBudgetStore.swift
 Sources/Design/Cost/CostInsightsScreen.swift
 Sources/Design/Cost/CostInsightsViewModel.swift
 Sources/Design/Cost/CostModels.swift
+Sources/Design/Traces/RunTimelineScreen.swift
+Sources/Design/Traces/RunTimelineViewModel.swift
+Sources/Design/Traces/TraceExplorerViewModel.swift
+Sources/Design/Traces/TraceFormatting.swift
+Sources/Design/Traces/TraceListScreen.swift
+Sources/Design/Traces/TraceModels.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift
