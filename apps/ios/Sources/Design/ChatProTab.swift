@@ -39,6 +39,7 @@ struct ChatProTab: View {
                             drawsBackground: false,
                             showsSessionSwitcher: false,
                             userAccent: self.chatUserAccent,
+                            showsAssistantTrace: true,
                             assistantName: self.agentDisplayName,
                             assistantAvatarText: self.agentBadge,
                             assistantAvatarTint: OpenClawBrand.accent,
