@@ -289,24 +289,15 @@ private struct ChatMessageBody: View {
                 }
             }
 
-            if self.showsAssistantTrace, !self.toolCalls.isEmpty {
-                ForEach(self.toolCalls.indices, id: \.self) { idx in
-                    ToolCallCard(
-                        content: self.toolCalls[idx],
-                        isUser: self.isUser)
-                }
-            }
-
-            if self.showsAssistantTrace, !self.inlineToolResults.isEmpty {
-                ForEach(self.inlineToolResults.indices, id: \.self) { idx in
-                    let toolResult = self.inlineToolResults[idx]
-                    let display = ToolDisplayRegistry.resolve(name: toolResult.name ?? "tool", args: nil)
-                    ToolResultCard(
-                        title: "\(display.emoji) \(display.title)",
-                        text: toolResult.text ?? "",
-                        isUser: self.isUser,
-                        toolName: toolResult.name)
-                }
+            // Collapse a turn's tool calls + their results into one compact bubble so the
+            // transcript stays readable; expansion is view-local @State keyed by the stable message id.
+            if self.showsAssistantTrace,
+               !self.toolCalls.isEmpty || !self.inlineToolResults.isEmpty
+            {
+                ToolTraceBubble(
+                    toolCalls: self.toolCalls,
+                    toolResults: self.inlineToolResults,
+                    isUser: self.isUser)
             }
         }
         .textSelection(.enabled)
@@ -459,47 +450,6 @@ private struct AttachmentRow: View {
     }
 }
 
-private struct ToolCallCard: View {
-    let content: OpenClawChatMessageContent
-    let isUser: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(self.toolName)
-                    .font(.footnote.weight(.semibold))
-                Spacer(minLength: 0)
-            }
-
-            if let summary = self.summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(OpenClawChatTheme.subtleCard)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)))
-    }
-
-    private var toolName: String {
-        "\(self.display.emoji) \(self.display.title)"
-    }
-
-    private var summary: String? {
-        self.display.detailLine
-    }
-
-    private var display: ToolDisplaySummary {
-        ToolDisplayRegistry.resolve(name: self.content.name ?? "tool", args: self.content.arguments)
-    }
-}
-
 private struct ToolResultCard: View {
     let title: String
     let text: String
@@ -557,6 +507,217 @@ private struct ToolResultCard: View {
 
     private var shouldShowToggle: Bool {
         self.lines.count > Self.previewLineLimit
+    }
+}
+
+// One bubble per assistant turn that holds all of that turn's tool calls. Collapsed by default
+// (icon + count + chevron); tapping reveals each call's name, arguments, and result. Results are
+// correlated to calls by tool-call id so an interrupted turn can show "Pending" for a call that
+// never produced a result.
+@MainActor
+private struct ToolTraceBubble: View {
+    let toolCalls: [OpenClawChatMessageContent]
+    let toolResults: [OpenClawChatMessageContent]
+    let isUser: Bool
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                self.expanded.toggle()
+            } label: {
+                self.header
+            }
+            .buttonStyle(.plain)
+
+            if self.expanded {
+                ForEach(self.rows) { row in
+                    ToolTraceRow(call: row.call, result: row.result, isUser: self.isUser)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(OpenClawChatTheme.subtleCard)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)))
+        .animation(.snappy, value: self.expanded)
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text(self.summary)
+                .font(.footnote.weight(.semibold))
+            Spacer(minLength: 0)
+            Image(systemName: self.expanded ? "chevron.down" : "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var summary: String {
+        let count = self.rows.count
+        let noun = count == 1 ? "tool call" : "tool calls"
+        // When collapsed, hint at which tools ran so the header is meaningful at a glance.
+        let names = self.rows.prefix(2).map { row -> String in
+            let display = ToolDisplayRegistry.resolve(name: row.call?.name ?? "tool", args: row.call?.arguments)
+            return "\(display.emoji) \(display.title)"
+        }
+        guard !self.expanded, !names.isEmpty else {
+            return "\(count) \(noun)"
+        }
+        let joined = names.joined(separator: ", ")
+        let suffix = count > names.count ? " +\(count - names.count)" : ""
+        return "\(count) \(noun): \(joined)\(suffix)"
+    }
+
+    // Pair each tool call with its result by id. Calls without a match render as "Pending" (e.g.
+    // an interrupted turn). If a turn somehow has only results, fall back to rendering those.
+    private var rows: [ToolTraceRowModel] {
+        if self.toolCalls.isEmpty {
+            return self.toolResults.enumerated().map { idx, result in
+                ToolTraceRowModel(index: idx, call: nil, result: result)
+            }
+        }
+        return self.toolCalls.enumerated().map { idx, call in
+            let result = self.toolResults.first { $0.id != nil && $0.id == call.id }
+            return ToolTraceRowModel(index: idx, call: call, result: result)
+        }
+    }
+}
+
+private struct ToolTraceRowModel: Identifiable {
+    let index: Int
+    let call: OpenClawChatMessageContent?
+    let result: OpenClawChatMessageContent?
+
+    // Calls share the model-supplied id; fall back to index for result-only rows.
+    var id: String {
+        self.call?.id ?? self.result?.id ?? "row-\(self.index)"
+    }
+}
+
+@MainActor
+private struct ToolTraceRow: View {
+    let call: OpenClawChatMessageContent?
+    let result: OpenClawChatMessageContent?
+    let isUser: Bool
+    @State private var resultExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(self.title)
+                .font(.footnote.weight(.semibold))
+
+            if let arguments = self.argumentsText, !arguments.isEmpty {
+                Text(arguments)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            self.resultView
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var resultView: some View {
+        let formatted = self.resultText
+        if formatted.isEmpty {
+            // No matching tool.result means the call never completed (commonly an interrupted turn).
+            Label("Pending", systemImage: "clock")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text(self.displayedResult(formatted))
+                .font(.caption.monospaced())
+                .foregroundStyle(self.isUser ? OpenClawChatTheme.userText : OpenClawChatTheme.assistantText)
+                .lineLimit(self.resultExpanded ? nil : Self.previewLineLimit)
+
+            if self.resultLineCount(formatted) > Self.previewLineLimit {
+                Button(self.resultExpanded ? "Show less" : "Show full output") {
+                    self.resultExpanded.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let previewLineLimit = 8
+
+    private var title: String {
+        let name = self.call?.name ?? self.result?.name ?? "tool"
+        let display = ToolDisplayRegistry.resolve(name: name, args: self.call?.arguments)
+        return "\(display.emoji) \(display.title)"
+    }
+
+    private var argumentsText: String? {
+        ToolArgumentsFormatter.format(self.call?.arguments)
+    }
+
+    private var resultText: String {
+        ToolResultTextFormatter.format(text: self.result?.text ?? "", toolName: self.result?.name)
+    }
+
+    private func resultLineCount(_ text: String) -> Int {
+        text.components(separatedBy: .newlines).count
+    }
+
+    private func displayedResult(_ text: String) -> String {
+        let lines = text.components(separatedBy: .newlines)
+        guard !self.resultExpanded, lines.count > Self.previewLineLimit else { return text }
+        return lines.prefix(Self.previewLineLimit).joined(separator: "\n") + "\n…"
+    }
+}
+
+// Renders tool-call arguments as a compact single-line JSON-ish summary, truncating long values.
+enum ToolArgumentsFormatter {
+    private static let maxLength = 200
+
+    static func format(_ args: AnyCodable?) -> String? {
+        guard let value = args?.value else { return nil }
+        let rendered = self.render(value)
+        let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "{}", trimmed != "[]" else { return nil }
+        if trimmed.count > self.maxLength {
+            return String(trimmed.prefix(self.maxLength - 1)) + "…"
+        }
+        return trimmed
+    }
+
+    private static func render(_ value: Any) -> String {
+        switch value {
+        case let dict as [String: AnyCodable]:
+            let parts = dict.sorted { $0.key < $1.key }.map { "\($0.key): \(self.render($0.value.value))" }
+            return parts.joined(separator: ", ")
+        case let array as [AnyCodable]:
+            return "[" + array.map { self.render($0.value) }.joined(separator: ", ") + "]"
+        case let str as String:
+            let firstLine = str.split(whereSeparator: \.isNewline).first.map(String.init) ?? str
+            return firstLine
+        case let bool as Bool:
+            return bool ? "true" : "false"
+        case let int as Int:
+            return String(int)
+        case let double as Double:
+            return String(double)
+        case is NSNull:
+            return "null"
+        default:
+            return String(describing: value)
+        }
     }
 }
 
@@ -658,37 +819,64 @@ struct ChatStreamingAssistantBubble: View {
 @MainActor
 struct ChatPendingToolsBubble: View {
     let toolCalls: [OpenClawChatPendingToolCall]
+    // Live counterpart of ToolTraceBubble: in-flight tools collapse behind the same header. Calls
+    // arrive incrementally (pendingToolCalls is published), so the list updates while expanded.
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Running tools…", systemImage: "hammer")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            ForEach(self.toolCalls) { call in
-                let display = ToolDisplayRegistry.resolve(name: call.name, args: call.args)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(display.emoji) \(display.label)")
-                            .font(.footnote.monospaced())
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        ProgressView().controlSize(.mini)
-                    }
-                    if let detail = display.detailLine, !detail.isEmpty {
-                        Text(detail)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+            Button {
+                self.expanded.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(self.summary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ProgressView().controlSize(.mini)
+                    Spacer(minLength: 0)
+                    Image(systemName: self.expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .padding(10)
-                .background(Color.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if self.expanded {
+                ForEach(self.toolCalls) { call in
+                    let display = ToolDisplayRegistry.resolve(name: call.name, args: call.args)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(display.emoji) \(display.label)")
+                                .font(.footnote.monospaced())
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            ProgressView().controlSize(.mini)
+                        }
+                        if let detail = display.detailLine, !detail.isEmpty {
+                            Text(detail)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             }
         }
         .padding(12)
         .assistantBubbleContainerStyle()
+        .animation(.snappy, value: self.expanded)
+    }
+
+    private var summary: String {
+        let count = self.toolCalls.count
+        return "Running \(count) \(count == 1 ? "tool" : "tools")…"
     }
 }
 
