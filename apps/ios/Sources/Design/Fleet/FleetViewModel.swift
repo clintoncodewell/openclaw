@@ -257,18 +257,17 @@ final class FleetViewModel {
     /// code first, then fall back to the top-level `error.code`.
     private static func mapResponseError(_ error: GatewayResponseError) -> FleetActionResult {
         let detailCode = (error.details["code"]?.value as? String) ?? ""
-        let topCode = error.code
-        let reason = error.detailsReason ?? error.message
 
         if detailCode == "QUEUED_UNTIL_FOREGROUND" { return .queuedUntilForeground }
         if detailCode == "NOT_CONNECTED" { return .notConnected }
-        // Authorization / allowlist rejections — the command isn't in the node's declared+allowlisted set,
-        // or the operator lacks the scope. Surfaced as `notAllowed` so the UI explains it rather than
-        // showing a raw transport error.
-        if topCode == "FORBIDDEN" || topCode == "UNAUTHORIZED" || topCode == "INVALID_REQUEST" {
-            return .notAllowed(reason: reason)
+        // Command-not-allowed: the command isn't in the node's declared + platform-allowlisted set. The
+        // gateway always returns this as INVALID_REQUEST (`nodes.ts`), never FORBIDDEN/UNAUTHORIZED.
+        // Prefer the friendlier `message` hint (buildNodeCommandRejectionHint) over the terse
+        // `details.reason` policy string for this user-facing case.
+        if error.code == "INVALID_REQUEST" {
+            return .notAllowed(reason: error.message.isEmpty ? error.detailsReason ?? error.message : error.message)
         }
-        return .error(reason)
+        return .error(error.detailsReason ?? error.message)
     }
 
     // MARK: - Decode helpers
