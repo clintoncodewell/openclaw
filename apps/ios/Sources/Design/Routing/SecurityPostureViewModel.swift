@@ -192,8 +192,10 @@ final class SecurityPostureViewModel {
         }
         let decision = dict["decision"] as? String
         let priorIndex = self.approvalFeed.firstIndex { $0.id == id }
+        // The resolved broadcast nests the command under `request` ({id, decision, resolvedBy, ts,
+        // request}), not at the top level, so read it from there when the row wasn't already in the feed.
         let command = priorIndex.map { self.approvalFeed[$0].command }
-            ?? (dict["command"] as? String)
+            ?? Self.commandFromRequest(dict["request"])
             ?? "command"
         let origin = priorIndex.map { self.approvalFeed[$0].origin } ?? "Unknown source"
         let resolvedEntry = ApprovalFeedEntry(
@@ -207,6 +209,19 @@ final class SecurityPostureViewModel {
             self.approvalFeed.insert(resolvedEntry, at: 0)
             self.approvalFeed = Array(self.approvalFeed.prefix(Self.feedLimit))
         }
+    }
+
+    /// Pull the command text out of a resolved broadcast's nested `request` object (`request.command`,
+    /// falling back to `request.commandPreview`). Returns nil when the request body is absent/empty.
+    private static func commandFromRequest(_ raw: Any?) -> String? {
+        guard let request = raw as? [String: Any] else { return nil }
+        for key in ["command", "commandPreview"] {
+            if let value = (request[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 
     // MARK: - Policy read (admin-gated)

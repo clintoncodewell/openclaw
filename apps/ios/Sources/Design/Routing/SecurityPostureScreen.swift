@@ -74,11 +74,11 @@ struct SecurityPostureScreen: View {
         case .empty:
             return "No posture data available"
         case let .loaded(report):
-            // A non-admin session sees only itself in `device.pair.list` (the gateway filters the roster
-            // to the caller's own device unless it holds operator.admin), so "N paired devices" would
-            // misframe a single self-row as a full roster. Frame it as this device only in that case.
+            // `device.pair.list` requires operator.admin (which subsumes the pairing scope the app never
+            // requests), so a non-admin device is denied the call outright — the roster is unavailable,
+            // not "this device only." Frame that honestly rather than implying a self-only roster.
             if !report.localScopes.hasAdmin {
-                return "This device only · live approval feed"
+                return "Device roster needs admin · live approval feed"
             }
             let deviceCount = report.devices.count
             return deviceCount == 1
@@ -233,8 +233,8 @@ struct SecurityPostureScreen: View {
             if devices.isEmpty {
                 CommandEmptyStateRow(
                     icon: "laptopcomputer.and.iphone",
-                    title: "No paired devices visible",
-                    detail: "A non-admin device only sees itself in the roster.")
+                    title: "Device roster unavailable",
+                    detail: "Listing paired devices needs operator.admin on this device.")
                     .padding(.horizontal, OpenClawProMetric.pagePadding)
             } else {
                 CommandPanel(padding: 8) {
