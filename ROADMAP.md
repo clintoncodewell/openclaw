@@ -112,13 +112,31 @@ Cloud AI Observability + Langfuse. **Honest caveat:** AgentRQ's "sub-second push
   span timeline; expandable JSON args/results reusing the tool-display rendering). `7f3cc43·f89d7c7`
 - ✅ **P5 — RED ops/health overview** (rate/error-rate/turn-latency from sessions.usage aggregates;
   "what needs attention" rollup: cron failures + provider auth + offline nodes; Command Center strip). `981d551·6ca36a0`
-- ▶ **Now:** P6 — model routing + provider auth-health + audit/security surface.
-- ⏳ **Next:** Wave 3 (fleet/nodes, memory/knowledge, cron/skill authoring) · Wave 4 novel (Chief-of-Staff
-  digest, ambient surfaces*, voice command, cross-agent "what changed", autopilot guardrails, shareable reports).
-  *Home-screen widgets / Live Activity need an app extension — not buildable in the free-team single-target
-  fork; will ship an in-app ambient surface instead.
+- ✅ **P6 — Model routing + provider auth-health + security posture** (read-only routing: primary +
+  fallback chain + catalog availability; models.authStatus per-profile OAuth/expiry re-auth signal;
+  device scopes / paired-devices / approval-policy posture). `0885236·844034f`
+- ✅ **Wave 3 #8 — Agent/node fleet dashboard** (node.list status/caps/last-seen; one-tap node actions
+  where the command policy permits; honest about invasive-capture gating). `1e68e56·7345178`
+- ✅ **Wave 4 #12 — "Chief of Staff" what-needs-you digest** ⭐ *(flagship novel)* — one ranked triage
+  hero synthesizing all six signals (approvals · failed crons · over-budget · dead auth · offline nodes ·
+  error spikes) with one-tap deep-links; reuses every existing decoder, no parallel fetches. `5e32869`
+- ✅ **Wave 4 #17 — Shareable report PDF export** (any brief → a polished single-page PDF via the in-app
+  "nice stylesheet" rendered with ImageRenderer; system share sheet). `cd1f053·5992ce2`
+
+**Deferred, with reason (not buildable safely/at all right now):**
+- **#13 Ambient widgets / Live Activity** — need an app extension; the free-team single-target fork can't
+  build extensions. The Chief-of-Staff digest is the in-app ambient surface instead.
+- **#10 Memory / knowledge views** — the gateway exposes no operator-facing memory/wiki/knowledge RPC
+  (memory is agent-tool-side); nothing to render without inventing protocol.
+- **#11 Cron / skill authoring** & **#16 Guardrails / autopilot** — admin-gated *writes* / gateway-side
+  automation against the live gateway; not appropriate to ship blind without you validating on your fleet.
+- **#14 Voice-first command** — large surface that needs real-device voice-UX iteration (device currently
+  disconnected); better built with you in the loop.
+- **#15 Cross-agent "what changed"** — substantially delivered by the Briefs inbox + the Chief-of-Staff
+  digest (cross-surface, cross-job rollups).
 
 Review process this session: each feature built E2E by a Map→Implement→2-lens-adversarial-QA→Fix workflow
 (grounded against real `src/gateway` source), then a focused independent review (Codex CLI, or a
-supplementary Claude adversarial reviewer when Codex hit its usage limit), fixes committed, build verified.
-Device install paused while the iPhone is disconnected — all waves are on `fork/main` + build-green.
+supplementary Claude adversarial reviewer once Codex hit its usage limit, resets 2026-06-25), fixes
+committed, build verified. All waves are on `fork/main`, build-green; device reinstall of the latest is
+queued until the iPhone reconnects (or `fork/build-ios.sh open`).
