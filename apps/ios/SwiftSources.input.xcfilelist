@@ -76,6 +76,10 @@ Sources/Design/Fleet/FleetViewModel.swift
 Sources/Design/Digest/CommandDigestSection.swift
 Sources/Design/Digest/CommandDigestViewModel.swift
 Sources/Design/Digest/DigestModels.swift
+Sources/Design/Crons/CronEditorView.swift
+Sources/Design/Crons/CronJobsModels.swift
+Sources/Design/Crons/CronJobsScreen.swift
+Sources/Design/Crons/CronJobsViewModel.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift

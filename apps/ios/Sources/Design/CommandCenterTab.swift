@@ -74,6 +74,7 @@ struct CommandCenterTab: View {
                             self.healthStrip
                             self.inboxCard
                             self.briefsCard
+                            self.cronsCard
                             self.costCard
                             self.healthCard
                             self.fleetCard
@@ -279,6 +280,56 @@ struct CommandCenterTab: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    /// Navigation card for the Crons / Jobs authoring surface, modeled exactly on `briefsCard` /
+    /// `healthCard`: a `CommandPanel` row pushing `CronJobsScreen`, with a danger count pill (mirroring the
+    /// health issue pill) when the ranked digest reports failing scheduled jobs. This is the JOB-DEFINITION
+    /// surface (list + create/edit/run/delete); `briefsCard` stays the run-LOG surface.
+    private var cronsCard: some View {
+        NavigationLink {
+            CronJobsScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "clock.arrow.circlepath", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Jobs")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.gatewayConnected
+                            ? "Schedule, edit & run cron jobs"
+                            : "Connect to the gateway to manage jobs")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if self.gatewayConnected, let failing = self.failingJobCount, failing > 0 {
+                        Text("\(failing)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(OpenClawBrand.danger, in: Capsule())
+                            .accessibilityLabel("\(failing) jobs failing")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    /// Distinct-failing-job count for the Jobs card pill, read off the same ranked digest the hero uses
+    /// (its `jobsFailed` signal is `cron.runs` filtered to `statusKind == .error`), so the card agrees with
+    /// the digest without a second `cron.runs` fetch. `nil` until the digest has loaded.
+    private var failingJobCount: Int? {
+        guard case let .loaded(items) = self.digest.state else { return nil }
+        return items.first { $0.kind == .jobsFailed }?.count
     }
 
     private var costCard: some View {
