@@ -1,4 +1,5 @@
 import OpenClawChatUI
+import OpenClawProtocol
 import SwiftUI
 
 struct CommandCenterTab: View {
@@ -23,6 +24,10 @@ struct CommandCenterTab: View {
     @State private var costMonthUSD: Double?
     /// Client-side budget caps, shared with the Cost dashboard. Drives the over/near-budget pill.
     @State private var budget = CostBudgetStore()
+    /// Lightweight operational-health summary for the Health card subtitle / count pill and the inline
+    /// at-a-glance strip, fetched from the same `sessions.usage` RED aggregates the Health screen reads so
+    /// the card and the screen agree without a second source of truth. `nil` until loaded / while offline.
+    @State private var healthSummary: CommandHealthSummary?
     var headerTitle: String = "OpenClaw"
     var headerLeadingAction: OpenClawSidebarHeaderAction?
     var showsHeaderMark: Bool = true
@@ -56,9 +61,11 @@ struct CommandCenterTab: View {
                         VStack(alignment: .leading, spacing: 14) {
                             self.header
                             self.gatewayCard
+                            self.healthStrip
                             self.inboxCard
                             self.briefsCard
                             self.costCard
+                            self.healthCard
                             self.tracesCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
@@ -97,6 +104,9 @@ struct CommandCenterTab: View {
         }
         .task(id: self.inboxBadgeRefreshID) {
             await self.refreshCostToday()
+        }
+        .task(id: self.inboxBadgeRefreshID) {
+            await self.refreshHealth()
         }
         .task {
             await self.observeInboxPendingCount()
@@ -294,6 +304,114 @@ struct CommandCenterTab: View {
             monthSpend: self.costMonthUSD ?? 0)
         guard status.isNearOrOver else { return nil }
         return (label: status.pillLabel, color: status.color)
+    }
+
+    /// Navigation card for the RED / operational-health overview, modeled exactly on `costCard`: a
+    /// `CommandPanel` row pushing `OpsHealthScreen`, with a danger count pill (mirroring the inbox badge)
+    /// when issues need attention. Subtitle reflects connection + the lightweight `healthSummary`.
+    private var healthCard: some View {
+        NavigationLink {
+            OpsHealthScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "waveform.path.ecg", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Health")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.healthSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if self.gatewayConnected, let count = self.healthSummary?.issueCount, count > 0 {
+                        Text("\(count)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(OpenClawBrand.danger, in: Capsule())
+                            .accessibilityLabel("\(count) issues need attention")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var healthSubtitle: String {
+        guard self.gatewayConnected else {
+            return "Connect to the gateway to view health"
+        }
+        guard let summary = self.healthSummary else {
+            return "Request, error & latency at a glance"
+        }
+        switch summary.issueCount {
+        case 0:
+            return "All systems healthy"
+        case 1:
+            return "1 issue needs attention"
+        default:
+            return "\(summary.issueCount) issues need attention"
+        }
+    }
+
+    /// Thin always-visible RED strip under the gateway card: error-rate + p95 latency at a glance, so the
+    /// home screen surfaces the two signals an operator checks most without opening the overview. Hidden
+    /// until connected + loaded, so it never shows misleading zeros.
+    @ViewBuilder
+    private var healthStrip: some View {
+        if self.gatewayConnected, let summary = self.healthSummary, summary.hasSignal {
+            CommandPanel(padding: 10) {
+                HStack(spacing: 0) {
+                    self.healthStripCell(
+                        icon: "exclamationmark.triangle.fill",
+                        title: "Error rate",
+                        value: OpsFormatting.percent(summary.errorRatePct),
+                        color: summary.errorColor)
+                    Divider().frame(height: 26)
+                    self.healthStripCell(
+                        icon: "timer",
+                        title: "p95 latency",
+                        value: summary.p95Label,
+                        color: OpenClawBrand.accentHot)
+                    Divider().frame(height: 26)
+                    self.healthStripCell(
+                        icon: "checkmark.seal.fill",
+                        title: "Attention",
+                        value: summary.issueCount == 0 ? "Clear" : "\(summary.issueCount)",
+                        color: summary.issueCount == 0 ? OpenClawBrand.ok : OpenClawBrand.danger)
+                }
+            }
+            .padding(.horizontal, OpenClawProMetric.pagePadding)
+        }
+    }
+
+    private func healthStripCell(icon: String, title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(color)
+                Text(title)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
     }
 
     private var tracesCard: some View {
@@ -690,6 +808,36 @@ struct CommandCenterTab: View {
         }
     }
 
+    /// Fetch the lightweight RED summary for the Health card subtitle / count pill and the inline strip.
+    /// Two concurrent reads mirror the Health screen's own sources: `sessions.usage` for the error-rate +
+    /// p95 latency at-a-glance, and `cron.runs` (error statuses only) for the cron-failure count that
+    /// dominates the attention rollup. Provider / node issues live behind the full screen; the card's
+    /// count is the cheap, always-correct-direction cron count (it can only under-report, reconciling on
+    /// open). Cleared when offline; the last known value is kept on a transient failure.
+    private func refreshHealth() async {
+        guard self.scenePhase == .active, self.gatewayConnected else {
+            if self.healthSummary != nil { self.healthSummary = nil }
+            return
+        }
+        async let usageThrowing = self.appModel.operatorSession.request(
+            method: "sessions.usage",
+            paramsJSON: "{\"range\":\"30d\",\"agentScope\":\"all\",\"mode\":\"gateway\",\"limit\":200}",
+            timeoutSeconds: 12)
+        // No server-side `statuses` filter: the gateway schema only accepts `ok`/`error`/`skipped`
+        // (`cron.ts:100-104`, `additionalProperties:false`), so any extra literal makes the whole
+        // `cron.runs` call fail validation and return nothing. Fetch all runs; `distinctFailingJobCount`
+        // narrows to `statusKind == .error` client-side.
+        async let cronThrowing = self.appModel.operatorSession.request(
+            method: "cron.runs",
+            paramsJSON: "{\"scope\":\"all\",\"sortDir\":\"desc\",\"limit\":50}",
+            timeoutSeconds: 12)
+        let usageData = try? await usageThrowing
+        let cronData = try? await cronThrowing
+        guard let usageData, let usage = OpsUsageResultLite.decode(from: usageData) else { return }
+        let summary = CommandHealthSummary(usage: usage, cronFailures: cronData)
+        self.healthSummary = summary
+    }
+
     /// Keep the badge live while foregrounded: the gateway broadcasts `exec.approval.requested` /
     /// `exec.approval.resolved` to approvals-scoped clients, so a request raised or resolved anywhere
     /// (this app, the watch, a notification action) bumps the badge without polling.
@@ -1057,5 +1205,77 @@ extension NodeAppModel {
 
     fileprivate var commandSessionListMode: String {
         self.chatTransportModeID
+    }
+}
+
+/// The cheap RED snapshot the Command Center home shows on the Health card + inline strip: window-wide
+/// error rate, window p95 turn latency (ms), and an attention count. Derived from the same
+/// `sessions.usage` aggregates the full Health screen reads, so the card and the screen agree. The count
+/// is just the cron-failure count (the dominant, always-available attention signal); the full screen adds
+/// provider / node / gateway issues, so the card can only under-report and reconciles on open.
+struct CommandHealthSummary {
+    let errorRatePct: Double
+    let p95Ms: Double
+    let hasLatency: Bool
+    let issueCount: Int
+
+    init(usage: OpsUsageResultLite, cronFailures: Data?) {
+        // Error rate uses total messages (user+assistant) as the denominator and clamps at 100%, matching
+        // the Health screen's tile. `messages.errors` counts tool-result errors plus assistant error
+        // stop-reasons (`session-cost-usage.ts:676-683`), so dividing by `assistant` alone could exceed
+        // 100%; `total` keeps the card and screen numerically aligned.
+        let messages = usage.aggregates?.messages
+        let errors = messages?.errors ?? 0
+        let total = messages?.total ?? 0
+        self.errorRatePct = total > 0 ? min(Double(errors) / Double(total) * 100, 100) : 0
+
+        let latency = usage.aggregates?.latency
+        self.p95Ms = latency?.p95Ms ?? 0
+        self.hasLatency = (latency?.count ?? 0) > 0
+
+        self.issueCount = Self.distinctFailingJobCount(cronFailures)
+    }
+
+    /// True when there's any RED signal to show (an error rate, a latency sample, or an open issue), so
+    /// the strip hides on a brand-new account rather than showing 0% / — / Clear.
+    var hasSignal: Bool {
+        self.errorRatePct > 0 || self.hasLatency || self.issueCount > 0
+    }
+
+    var errorColor: Color {
+        if self.errorRatePct >= OpsHealthThresholds.errorRateDanger { return OpenClawBrand.danger }
+        if self.errorRatePct >= OpsHealthThresholds.errorRateWarn { return OpenClawBrand.warn }
+        return OpenClawBrand.ok
+    }
+
+    var p95Label: String {
+        self.hasLatency ? OpsFormatting.latency(self.p95Ms) : "—"
+    }
+
+    /// Distinct failing jobs in the `cron.runs` error page, deduped on jobId so a job that failed
+    /// repeatedly counts once — matching the Health screen's per-job attention rows.
+    private static func distinctFailingJobCount(_ data: Data?) -> Int {
+        guard let data else { return 0 }
+        struct Envelope: Decodable {
+            let entries: [AnyCodable]?
+        }
+        let decoder = JSONDecoder()
+        guard let envelope = try? decoder.decode(Envelope.self, from: data),
+              let rawEntries = envelope.entries
+        else {
+            return 0
+        }
+        var seenJobs = Set<String>()
+        for raw in rawEntries {
+            guard let entryData = try? JSONEncoder().encode(raw),
+                  let entry = try? decoder.decode(CronRunLogEntry.self, from: entryData),
+                  let run = BriefRun(entry: entry),
+                  run.statusKind == .error
+            else {
+                continue
+            }
+            seenJobs.insert(run.jobId)
+        }
+        return seenJobs.count
     }
 }

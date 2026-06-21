@@ -56,6 +56,9 @@ Sources/Design/Traces/TraceExplorerViewModel.swift
 Sources/Design/Traces/TraceFormatting.swift
 Sources/Design/Traces/TraceListScreen.swift
 Sources/Design/Traces/TraceModels.swift
+Sources/Design/Ops/OpsHealthScreen.swift
+Sources/Design/Ops/OpsHealthViewModel.swift
+Sources/Design/Ops/OpsModels.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift
