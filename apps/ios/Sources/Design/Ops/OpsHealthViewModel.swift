@@ -263,7 +263,10 @@ final class OpsHealthViewModel {
         // rather than `suffix(n)`, which would reach further back than n calendar days when days are gappy.
         let requests24h = Self.requestSum(daily, trailingDays: 1)
         let requests7d = Self.requestSum(daily, trailingDays: 7)
-        let requestsWindow = messages?.total ?? Self.requestSum(daily, trailingDays: daily.count)
+        // Window total on the SAME basis as the sub-windows (messages + toolCalls), so the invariant
+        // requests7d <= requestsWindow holds. (`messages.total` is user+assistant only and would let a
+        // tool-heavy 7d exceed it.) Only feeds hasAnySignal / state-equality, never a displayed tile.
+        let requestsWindow = Self.requestSum(daily, trailingDays: daily.count)
 
         // ERRORS: window error rate = errors / total messages (user+assistant), the SAME denominator the
         // per-day chart and the trend use, so the headline tile and its sparkline agree numerically. The
@@ -312,7 +315,10 @@ final class OpsHealthViewModel {
     private static func errorRatePoints(from daily: [OpsDailyLite]) -> [OpsRatePoint] {
         daily.compactMap { entry in
             guard let date = Self.date(from: entry.date) else { return nil }
-            let value = Self.percent(entry.errors ?? 0, of: entry.messages ?? 0)
+            // Clamp at 100% like the headline tile: `errors` (tool-result errors + assistant error
+            // stop-reasons) can outnumber the day's user+assistant `messages`, which would otherwise
+            // plot a >100% point and disagree with the clamped tile.
+            let value = min(Self.percent(entry.errors ?? 0, of: entry.messages ?? 0), 100)
             return OpsRatePoint(date: date, dayKey: entry.date, value: value)
         }
     }

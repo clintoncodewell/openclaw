@@ -441,8 +441,9 @@ enum OpsSeverity {
 /// Tunable thresholds for the derived RED health verdicts, kept in one place so the view model and the
 /// screen agree. All are client-side derivations — the gateway exposes no error-rate or "at-risk" field.
 enum OpsHealthThresholds {
-    /// Error-rate (%) at/over which the error tile turns danger; the amber band starts at half this.
+    /// Error-rate (%) at/over which the error tile turns danger.
     static let errorRateDanger: Double = 10
+    /// Error-rate (%) at/over which the error tile turns amber (warn), below `errorRateDanger`.
     static let errorRateWarn: Double = 3
     /// Provider window quota (%) at/over which we raise a near-quota attention item + amber the bar.
     static let providerQuotaWarn: Double = 90
