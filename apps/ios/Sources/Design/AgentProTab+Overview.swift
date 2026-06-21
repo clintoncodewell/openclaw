@@ -279,6 +279,8 @@ extension AgentProTab {
                         .frame(height: 24)
                         .padding(.horizontal, 12)
                     self.agentMetric(label: "Runtime", value: self.agentRuntimeSummary(agent))
+                    Spacer(minLength: 8)
+                    self.agentRoutingLink(agent)
                 }
             }
             .layoutPriority(1)
@@ -370,6 +372,23 @@ extension AgentProTab {
                 .minimumScaleFactor(0.74)
         }
         .frame(minWidth: 60, alignment: .leading)
+    }
+
+    /// Deep-link from the roster row into the Model Routing screen, focused on this agent. Renders only
+    /// while connected (the routing screen needs the gateway). A `NavigationLink` works because the
+    /// roster lives inside `AgentProTab`'s `NavigationStack`; it does not conflict with the row's
+    /// set-default tap because it is its own hit target.
+    @ViewBuilder
+    func agentRoutingLink(_ agent: AgentSummary) -> some View {
+        if self.gatewayConnected {
+            NavigationLink {
+                RoutingScreen(focusedAgentId: agent.id)
+            } label: {
+                ProCapsule(title: "Routing", color: OpenClawBrand.accent, icon: "arrow.triangle.branch")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open model routing for \(self.agentName(for: agent))")
+        }
     }
 
     func agentMenuRow(

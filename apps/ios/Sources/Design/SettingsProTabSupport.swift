@@ -5,6 +5,7 @@ import SwiftUI
 enum SettingsRoute: Hashable {
     case gateway
     case approvals
+    case security
     case permissions
     case channels
     case voice

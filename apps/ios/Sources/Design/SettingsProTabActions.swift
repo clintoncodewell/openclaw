@@ -485,6 +485,7 @@ extension SettingsProTab {
         switch route {
         case .gateway: "Gateway"
         case .approvals: "Approvals"
+        case .security: "Security"
         case .permissions: "Permissions"
         case .channels: "Channels"
         case .voice: "Voice & Talk"
@@ -499,6 +500,7 @@ extension SettingsProTab {
         switch route {
         case .gateway: "Pairing, diagnostics, and Tailscale checks."
         case .approvals: "Review pending agent actions."
+        case .security: "Scopes, paired devices, and approval policy."
         case .permissions: "Control device capabilities."
         case .channels: "Message routing and external clients."
         case .voice: "Talk mode and wake phrase settings."

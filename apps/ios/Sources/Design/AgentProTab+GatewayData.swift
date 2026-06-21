@@ -31,9 +31,31 @@ extension AgentProTab {
         let parts = [
             self.normalized(agent.workspace),
             self.modelLabel(for: agent),
+            self.fallbackChainLabel(for: agent),
             agent.id == self.appModel.gatewayDefaultAgentId ? "default" : nil,
         ].compactMap(\.self)
         return parts.isEmpty ? agent.id : parts.joined(separator: " • ")
+    }
+
+    /// Short fallback-chain caption for the roster line, e.g. "+2 fallback". The fallbacks are ALREADY
+    /// on the wire from `agents.list` (`session-utils.ts:1248`) — the old `modelLabel` read only the
+    /// primary and dropped them. The full ordered chain + per-step availability lives on the dedicated
+    /// Routing screen; this is just the at-a-glance count so the roster signals a fallback chain exists.
+    func fallbackChainLabel(for agent: AgentSummary) -> String? {
+        // A decoded `AnyCodable` array holds `[AnyCodable]` elements, so unwrap each `.value as? String`
+        // (a plain `$0 as? String` over the array would fail — the elements are `AnyCodable`, not raw
+        // strings). The primary is excluded from the gateway's resolved `fallbacks` already.
+        guard let model = agent.model,
+              let fallbacks = model["fallbacks"]?.value as? [AnyCodable]
+        else {
+            return nil
+        }
+        let count = fallbacks
+            .compactMap { ($0.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .count
+        guard count > 0 else { return nil }
+        return "+\(count) fallback"
     }
 
     func agentSessionSummary(_ agent: AgentSummary) -> String {

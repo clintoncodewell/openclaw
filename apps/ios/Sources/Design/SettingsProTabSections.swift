@@ -137,6 +137,11 @@ extension SettingsProTab {
                 color: self.pendingApproval == nil ? .secondary : OpenClawBrand.warn,
                 badgeValue: self.pendingApproval == nil ? nil : "1")
             self.settingsListRow(
+                icon: "lock.shield",
+                title: "Security",
+                detail: "Scopes, paired devices, and approval policy.",
+                route: .security)
+            self.settingsListRow(
                 icon: "person.2",
                 title: "Permissions",
                 detail: self.permissionsDetail,
@@ -209,7 +214,19 @@ extension SettingsProTab {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
     func destination(for route: SettingsRoute) -> some View {
+        // The Security posture surface ships its own scroll + background + nav chrome (it mirrors the
+        // Command Center *Screen pattern, with a live broadcast-driven feed), so it is rendered
+        // standalone rather than nested inside the shared settings scroll wrapper below.
+        if case .security = route {
+            SecurityPostureScreen()
+        } else {
+            self.wrappedDestination(for: route)
+        }
+    }
+
+    private func wrappedDestination(for route: SettingsRoute) -> some View {
         ZStack {
             OpenClawProBackground()
             ScrollView {
@@ -222,6 +239,10 @@ extension SettingsProTab {
                         self.gatewayDestination
                     case .approvals:
                         self.approvalsDestination
+                    case .security:
+                        // Handled standalone in `destination(for:)`; unreachable here but the switch
+                        // must stay exhaustive.
+                        EmptyView()
                     case .permissions:
                         self.permissionsDestination
                     case .channels:

@@ -66,6 +66,8 @@ struct CommandCenterTab: View {
                             self.briefsCard
                             self.costCard
                             self.healthCard
+                            self.routingCard
+                            self.authHealthCard
                             self.tracesCard
                             if Self.usesSplitSectionsLayout(
                                 horizontalSizeClass: self.horizontalSizeClass,
@@ -360,6 +362,70 @@ struct CommandCenterTab: View {
         default:
             return "\(summary.issueCount) issues need attention"
         }
+    }
+
+    /// Navigation card for the Model Routing surface, modeled exactly on `healthCard` / `costCard`: a
+    /// `CommandPanel` row pushing `RoutingScreen`. Read-only by default (the fallback chain has no typed
+    /// setter; the optional primary-model write is admin-gated inside the screen).
+    private var routingCard: some View {
+        NavigationLink {
+            RoutingScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "arrow.triangle.branch", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Model Routing")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.gatewayConnected
+                            ? "Primary + fallback chain per agent"
+                            : "Connect to the gateway to view routing")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    /// Navigation card for the Provider Auth health surface, modeled on `healthCard`: a `CommandPanel`
+    /// row pushing `AuthHealthScreen` — the rich per-profile OAuth/expiry endpoint that would catch a
+    /// provider auth outage early. Read + one admin destructive action (clear dead credential).
+    private var authHealthCard: some View {
+        NavigationLink {
+            AuthHealthScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "key.fill", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Provider Auth")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.gatewayConnected
+                            ? "OAuth & credential health per provider"
+                            : "Connect to the gateway to view auth")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
     }
 
     /// Thin always-visible RED strip under the gateway card: error-rate + p95 latency at a glance, so the
