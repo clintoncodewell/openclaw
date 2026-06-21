@@ -342,23 +342,43 @@ enum GatewaySettingsStore {
     static func loadGatewaySelectedAgentId(stableID: String) -> String? {
         let trimmedID = stableID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedID.isEmpty else { return nil }
-        let key = self.selectedAgentDefaultsPrefix + trimmedID
-        let value = UserDefaults.standard.string(forKey: key)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if value?.isEmpty == false { return value }
+        // Keychain-backed (not UserDefaults) so the selected agent — and therefore the chat's session
+        // key (`agent:<agentId>:main`) — survives an app REINSTALL, which wipes UserDefaults but not the
+        // Keychain. Without this, a reinstall can collapse a non-default agent's chat key back to bare
+        // `main` and load a different/empty session while the real transcript still lives on the gateway.
+        let account = self.selectedAgentAccount(stableID: trimmedID)
+        if let value = KeychainStore.loadString(service: self.gatewayService, account: account)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+            return value
+        }
+        // One-time migration: adopt a pre-existing UserDefaults value (older app build) into the Keychain
+        // on first read after update, so an in-place upgrade never loses the current selection.
+        let legacyKey = self.selectedAgentDefaultsPrefix + trimmedID
+        if let legacy = UserDefaults.standard.string(forKey: legacyKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !legacy.isEmpty {
+            _ = KeychainStore.saveString(legacy, service: self.gatewayService, account: account)
+            UserDefaults.standard.removeObject(forKey: legacyKey)
+            return legacy
+        }
         return nil
     }
 
     static func saveGatewaySelectedAgentId(stableID: String, agentId: String?) {
         let trimmedID = stableID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedID.isEmpty else { return }
-        let key = self.selectedAgentDefaultsPrefix + trimmedID
+        let account = self.selectedAgentAccount(stableID: trimmedID)
         let trimmedAgentId = agentId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmedAgentId.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
+            _ = KeychainStore.delete(service: self.gatewayService, account: account)
         } else {
-            UserDefaults.standard.set(trimmedAgentId, forKey: key)
+            _ = KeychainStore.saveString(trimmedAgentId, service: self.gatewayService, account: account)
         }
+        // Drop any stale UserDefaults copy so the two stores can never disagree post-migration.
+        UserDefaults.standard.removeObject(forKey: self.selectedAgentDefaultsPrefix + trimmedID)
+    }
+
+    private static func selectedAgentAccount(stableID: String) -> String {
+        "gateway-selected-agent.\(stableID)"
     }
 
     private static func gatewayTokenAccount(instanceId: String) -> String {

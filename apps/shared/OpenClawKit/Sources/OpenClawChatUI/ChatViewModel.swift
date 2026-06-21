@@ -350,6 +350,17 @@ public final class OpenClawChatViewModel {
     {
         guard self.canApplyHistory(request) else { return false }
         let incoming = Self.decodeMessages(payload.messages ?? [])
+        // Defensive: a non-optimistic reload (reconnect / foreground refresh) that returns EMPTY for a
+        // session we already have content for must NOT blank the transcript. The gateway holds the real
+        // history; an empty response here is almost always a transient or a session-key-resolution hiccup,
+        // not deletion. Explicit reset / new-chat / session switch all clear `messages` to [] *before*
+        // bootstrapping, so this guard only catches the "history vanished under me" path — keep the visible
+        // transcript (and its session id) until a real non-empty payload or an explicit user action
+        // replaces it, rather than showing the user a terrifying empty screen over intact data.
+        if incoming.isEmpty, !preservingOptimisticLocalMessages, !self.messages.isEmpty {
+            chatUILogger.error("history reload returned empty for a populated session; preserving transcript")
+            return true
+        }
         self.messages = if preservingOptimisticLocalMessages {
             Self.reconcileRunRefreshMessages(
                 previous: self.messages,
