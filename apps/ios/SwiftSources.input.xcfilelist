@@ -43,6 +43,7 @@ Sources/Design/Briefs/BriefsInboxScreen.swift
 Sources/Design/Briefs/BriefsInboxViewModel.swift
 Sources/Design/Briefs/BriefsModels.swift
 Sources/Design/Briefs/BriefDetailScreen.swift
+Sources/Design/Briefs/BriefReportExporter.swift
 Sources/Design/Inbox/AgentInboxScreen.swift
 Sources/Design/Inbox/AgentInboxViewModel.swift
 Sources/Design/Inbox/InboxModels.swift

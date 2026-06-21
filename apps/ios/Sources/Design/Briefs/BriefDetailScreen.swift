@@ -6,6 +6,8 @@ import SwiftUI
 /// inherited from Command Center's NavigationStack — no custom dismiss handling needed.
 struct BriefDetailScreen: View {
     let run: BriefRun
+    @State private var shareItem: BriefShareItem?
+    @State private var exportFailed = false
 
     var body: some View {
         ZStack {
@@ -27,6 +29,35 @@ struct BriefDetailScreen: View {
         }
         .navigationTitle(self.run.jobName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    self.exportAndShare()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityLabel("Share report as PDF")
+            }
+        }
+        .sheet(item: self.$shareItem) { item in
+            BriefActivityView(items: [item.url])
+        }
+        .alert("Couldn't create the PDF", isPresented: self.$exportFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The report couldn't be rendered to a shareable file. Please try again.")
+        }
+    }
+
+    /// Render the brief to a polished PDF and present the system share sheet. `ImageRenderer` is
+    /// `@MainActor` and synchronous, so the file is ready by the time the sheet binding flips.
+    @MainActor
+    private func exportAndShare() {
+        if let url = BriefReportExporter.exportPDF(run: self.run) {
+            self.shareItem = BriefShareItem(url: url)
+        } else {
+            self.exportFailed = true
+        }
     }
 
     private var headerCard: some View {
