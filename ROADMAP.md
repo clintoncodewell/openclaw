@@ -103,4 +103,22 @@ Cloud AI Observability + Langfuse. **Honest caveat:** AgentRQ's "sub-second push
 - ✅ Foundation shipped this session: free-team iOS build on device · public Funnel · gateway
   loopback-bind scope fix (chat answers) · OpenAI re-auth · collapsible tool-call bubble.
 - ✅ morning-brief cron fixed + verified (was the OpenAI auth outage).
-- ▶ **Now:** Wave 1 #1 — Briefs/Reports Inbox.
+- ✅ **Wave 1 #1 — Briefs / Reports Inbox** (date folders, back nav, readable stylesheet, search/filter).
+- ✅ **P1 — Agent Inbox** (push-driven exec-approval HITL; Approve/Always/Ignore reusing the canonical
+  resolve path; live refresh; optimistic resolve + rollback; Command Center badge). `c82d6eb·aff7d39`
+- ✅ **P3 — Cost & Usage + budget guardrails** (usage.cost + sessions.usage; Swift Charts trend;
+  per-model/agent breakdown; client-side daily/monthly caps + over-budget alerts). `424e241·daf4f35`
+- ✅ **P4 — Tool-call trace / run explorer** (sessions.usage run list → chat.history ordered, turn-grouped
+  span timeline; expandable JSON args/results reusing the tool-display rendering). `7f3cc43·f89d7c7`
+- ✅ **P5 — RED ops/health overview** (rate/error-rate/turn-latency from sessions.usage aggregates;
+  "what needs attention" rollup: cron failures + provider auth + offline nodes; Command Center strip). `981d551·6ca36a0`
+- ▶ **Now:** P6 — model routing + provider auth-health + audit/security surface.
+- ⏳ **Next:** Wave 3 (fleet/nodes, memory/knowledge, cron/skill authoring) · Wave 4 novel (Chief-of-Staff
+  digest, ambient surfaces*, voice command, cross-agent "what changed", autopilot guardrails, shareable reports).
+  *Home-screen widgets / Live Activity need an app extension — not buildable in the free-team single-target
+  fork; will ship an in-app ambient surface instead.
+
+Review process this session: each feature built E2E by a Map→Implement→2-lens-adversarial-QA→Fix workflow
+(grounded against real `src/gateway` source), then a focused independent review (Codex CLI, or a
+supplementary Claude adversarial reviewer when Codex hit its usage limit), fixes committed, build verified.
+Device install paused while the iPhone is disconnected — all waves are on `fork/main` + build-green.
