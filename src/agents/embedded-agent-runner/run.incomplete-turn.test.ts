@@ -167,7 +167,10 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
 
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(1);
     expect(result.payloads).toEqual([
-      { text: "⚠️ Agent couldn't generate a response. Please try again.", isError: true },
+      {
+        text: "⚠️ Agent couldn't generate a response. Tools run this turn: web_search. Please try again.",
+        isError: true,
+      },
     ]);
     expect(result.meta?.livenessState).toBe("abandoned");
   });
@@ -321,7 +324,7 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
       {
         text:
           "Web fetch completed.\nOrigin: https://example.com\nStatus: 200\n\n" +
-          "⚠️ Agent couldn't generate a response. Please try again.",
+          "⚠️ Agent couldn't generate a response. Tools run this turn: web_fetch. Please try again.",
         isError: true,
       },
     ]);
@@ -378,7 +381,7 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
       {
         text:
           "Cron scheduler status.\nEnabled: yes\n\n" +
-          "⚠️ Agent couldn't generate a response. Please try again.",
+          "⚠️ Agent couldn't generate a response. Tools run this turn: cron. Please try again.",
         isError: true,
       },
     ]);

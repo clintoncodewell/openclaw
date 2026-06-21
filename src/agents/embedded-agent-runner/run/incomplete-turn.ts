@@ -303,9 +303,35 @@ export function resolveIncompleteTurnPayloadText(params: {
     return null;
   }
 
+  // Carry forward WHAT the turn did, not just that it failed. When a turn runs tools but never produces
+  // a final answer (provider error / abort / tool-use stall), the persisted note is the only narration the
+  // next turn sees — without the tool list it reads as "nothing happened" and the agent loses track of
+  // work it already performed. Naming the tools that ran gives the follow-up turn real context.
+  const toolsRun = collectIncompleteTurnToolNames(params.attempt.toolMetas);
+  const ranNote = toolsRun.length > 0 ? ` Tools run this turn: ${toolsRun.join(", ")}.` : "";
   return resolveAttemptReplayMetadata(params.attempt).hadPotentialSideEffects
-    ? "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
-    : "⚠️ Agent couldn't generate a response. Please try again.";
+    ? `⚠️ Agent couldn't generate a response.${ranNote} Note: some tool actions may have already been executed — please verify before retrying.`
+    : `⚠️ Agent couldn't generate a response.${ranNote} Please try again.`;
+}
+
+/**
+ * Distinct, order-preserving tool names that ran during an incomplete turn, for the carry-forward note.
+ * Defensive against a missing/blank `toolName` so a malformed meta never breaks the note.
+ */
+function collectIncompleteTurnToolNames(toolMetas?: readonly { toolName?: string }[]): string[] {
+  if (!toolMetas?.length) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const meta of toolMetas) {
+    const name = meta.toolName?.trim();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
 }
 
 /**
