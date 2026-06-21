@@ -72,6 +72,9 @@ Sources/Design/Fleet/FleetModels.swift
 Sources/Design/Fleet/FleetNodeDetail.swift
 Sources/Design/Fleet/FleetScreen.swift
 Sources/Design/Fleet/FleetViewModel.swift
+Sources/Design/Digest/CommandDigestSection.swift
+Sources/Design/Digest/CommandDigestViewModel.swift
+Sources/Design/Digest/DigestModels.swift
 Sources/EventKit/EventKitAuthorization.swift
 Sources/Gateway/DeepLinkAgentPromptAlert.swift
 Sources/Gateway/ExecApprovalPromptDialog.swift

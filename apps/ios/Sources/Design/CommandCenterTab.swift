@@ -24,6 +24,11 @@ struct CommandCenterTab: View {
     @State private var costMonthUSD: Double?
     /// Client-side budget caps, shared with the Cost dashboard. Drives the over/near-budget pill.
     @State private var budget = CostBudgetStore()
+    /// The "what needs you" digest: a single ranked rollup of the six operator signals the per-feature cards
+    /// fetch piecemeal (pending approvals, failed crons, over-budget spend, dead auth, offline nodes, error
+    /// spike). It reuses the exact same RPCs/decoders, so it's an additional prioritized synthesis, not a
+    /// second source of truth. Reads the SAME `budget` store so an over-budget row agrees with the Cost screen.
+    @State private var digest = CommandDigestViewModel()
     /// Lightweight operational-health summary for the Health card subtitle / count pill and the inline
     /// at-a-glance strip, fetched from the same `sessions.usage` RED aggregates the Health screen reads so
     /// the card and the screen agree without a second source of truth. `nil` until loaded / while offline.
@@ -65,6 +70,7 @@ struct CommandCenterTab: View {
                         VStack(alignment: .leading, spacing: 14) {
                             self.header
                             self.gatewayCard
+                            self.digestSection
                             self.healthStrip
                             self.inboxCard
                             self.briefsCard
@@ -118,8 +124,18 @@ struct CommandCenterTab: View {
         .task(id: self.inboxBadgeRefreshID) {
             await self.refreshFleet()
         }
+        // Load the ranked digest on the same foreground / reconnect trigger as the card summaries, passing
+        // the SHARED budget store so an over-budget row agrees with the Cost screen.
+        .task(id: self.inboxBadgeRefreshID) {
+            await self.digest.load(appModel: self.appModel, budget: self.budget, force: false)
+        }
         .task {
             await self.observeInboxPendingCount()
+        }
+        // Keep the digest live: re-rank on every exec-approval request/resolve so a decision raised or
+        // cleared anywhere updates the hero without polling (mirrors `observeInboxPendingCount`).
+        .task {
+            await self.digest.observeApprovalEvents(appModel: self.appModel, budget: self.budget)
         }
     }
 
@@ -182,6 +198,14 @@ struct CommandCenterTab: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    /// The prominent "what needs you" hero, placed top-of-feed just under the gateway card. Driven by the
+    /// shared `digest` view model; hides itself while offline / before the first load so it never shows a
+    /// spinner or stale rows at the very top. Rendered inside the body's `NavigationStack`, so each digest
+    /// row's deep-link push and the system back button work for free.
+    private var digestSection: some View {
+        CommandDigestSection(state: self.digest.state, gatewayConnected: self.gatewayConnected)
     }
 
     private var gatewayCard: some View {
