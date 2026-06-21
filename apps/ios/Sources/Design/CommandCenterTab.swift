@@ -28,6 +28,10 @@ struct CommandCenterTab: View {
     /// at-a-glance strip, fetched from the same `sessions.usage` RED aggregates the Health screen reads so
     /// the card and the screen agree without a second source of truth. `nil` until loaded / while offline.
     @State private var healthSummary: CommandHealthSummary?
+    /// Lightweight fleet roll-up for the Fleet card subtitle / offline-count pill, fetched from the same
+    /// `node.list` inventory the Fleet dashboard reads so the card and the screen agree without a second
+    /// source of truth. `nil` until loaded / while offline.
+    @State private var fleetSummary: CommandFleetSummary?
     var headerTitle: String = "OpenClaw"
     var headerLeadingAction: OpenClawSidebarHeaderAction?
     var showsHeaderMark: Bool = true
@@ -66,6 +70,7 @@ struct CommandCenterTab: View {
                             self.briefsCard
                             self.costCard
                             self.healthCard
+                            self.fleetCard
                             self.routingCard
                             self.authHealthCard
                             self.tracesCard
@@ -109,6 +114,9 @@ struct CommandCenterTab: View {
         }
         .task(id: self.inboxBadgeRefreshID) {
             await self.refreshHealth()
+        }
+        .task(id: self.inboxBadgeRefreshID) {
+            await self.refreshFleet()
         }
         .task {
             await self.observeInboxPendingCount()
@@ -362,6 +370,57 @@ struct CommandCenterTab: View {
         default:
             return "\(summary.issueCount) issues need attention"
         }
+    }
+
+    /// Navigation card for the Fleet dashboard, modeled exactly on `healthCard`: a `CommandPanel` row
+    /// pushing `FleetScreen`, with a danger offline-count pill (mirroring the health issue pill) when paired
+    /// nodes are disconnected. Subtitle reflects connection + the lightweight `fleetSummary`. This is a NEW
+    /// peer card; the Agent Pro Instances sub-view (presence-only, no actions) stays as-is.
+    private var fleetCard: some View {
+        NavigationLink {
+            FleetScreen()
+        } label: {
+            CommandPanel(padding: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    ProIconBadge(systemName: "externaldrive.connected.to.line.below", color: OpenClawBrand.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Fleet")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Text(self.fleetSubtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if self.gatewayConnected, let offline = self.fleetSummary?.offlineCount, offline > 0 {
+                        Text("\(offline)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(OpenClawBrand.danger, in: Capsule())
+                            .accessibilityLabel("\(offline) nodes offline")
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, OpenClawProMetric.pagePadding)
+    }
+
+    private var fleetSubtitle: String {
+        guard self.gatewayConnected else {
+            return "Connect to the gateway to view fleet"
+        }
+        guard let summary = self.fleetSummary else {
+            return "Nodes, agents & gateway at a glance"
+        }
+        let nodeWord = summary.nodeCount == 1 ? "node" : "nodes"
+        return "\(summary.nodeCount) \(nodeWord), \(summary.onlineCount) online"
     }
 
     /// Navigation card for the Model Routing surface, modeled exactly on `healthCard` / `costCard`: a
@@ -904,6 +963,24 @@ struct CommandCenterTab: View {
         self.healthSummary = summary
     }
 
+    /// Lightweight Fleet card summary, fetched from the same `node.list` inventory the Fleet dashboard
+    /// reads (scope `operator.read`, always held). Stores total / online / offline node counts for the card
+    /// subtitle + the offline pill. Cleared when offline; the last known value is kept on a transient
+    /// failure so the card doesn't flicker mid-refresh.
+    private func refreshFleet() async {
+        guard self.scenePhase == .active, self.gatewayConnected else {
+            if self.fleetSummary != nil { self.fleetSummary = nil }
+            return
+        }
+        let nodeData = try? await self.appModel.operatorSession.request(
+            method: "node.list",
+            paramsJSON: "{}",
+            timeoutSeconds: 12)
+        guard let nodeData else { return }
+        let nodes = FleetNode.decodeList(from: nodeData)
+        self.fleetSummary = CommandFleetSummary(nodes: nodes)
+    }
+
     /// Keep the badge live while foregrounded: the gateway broadcasts `exec.approval.requested` /
     /// `exec.approval.resolved` to approvals-scoped clients, so a request raised or resolved anywhere
     /// (this app, the watch, a notification action) bumps the badge without polling.
@@ -1343,5 +1420,21 @@ struct CommandHealthSummary {
             seenJobs.insert(run.jobId)
         }
         return seenJobs.count
+    }
+}
+
+/// The cheap node roll-up the Command Center home shows on the Fleet card: total known nodes, the live
+/// (online) count for the subtitle, and the offline (paired-but-disconnected) count for the danger pill.
+/// Derived from the same `node.list` inventory the full Fleet dashboard reads, so the card and the screen
+/// agree without a second source of truth.
+struct CommandFleetSummary {
+    let nodeCount: Int
+    let onlineCount: Int
+    let offlineCount: Int
+
+    init(nodes: [FleetNode]) {
+        self.nodeCount = nodes.count
+        self.onlineCount = nodes.count { $0.status == .online }
+        self.offlineCount = nodes.count { $0.status == .offline }
     }
 }
