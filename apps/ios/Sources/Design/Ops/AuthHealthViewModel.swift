@@ -178,8 +178,15 @@ final class AuthHealthViewModel {
     // MARK: - Params
 
     private static func logoutParamsJSON(provider: String) -> String {
-        let escaped = provider.replacingOccurrences(of: "\"", with: "\\\"")
-        return "{\"provider\":\"\(escaped)\"}"
+        // Encode via JSONEncoder so every special character in the provider id is escaped correctly —
+        // hand-escaping only the double-quote would emit malformed JSON for a `\`/control char. (Provider
+        // ids are a controlled gateway vocabulary so this is robustness, not an injection vector.)
+        guard let data = try? JSONEncoder().encode(["provider": provider]),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return "{}"
+        }
+        return json
     }
 
     private static func requestData(
