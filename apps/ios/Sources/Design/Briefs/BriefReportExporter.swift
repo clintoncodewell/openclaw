@@ -68,18 +68,16 @@ enum BriefReportExporter {
                 partial.append(character)
             }
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        let day = Self.dayFormatter.string(from: run.date)
-        let base = slug.isEmpty ? "report" : slug
-        return "\(base)-\(day).pdf"
-    }
-
-    private static let dayFormatter: DateFormatter = {
+        // Local formatter (export is rare): avoids a shared non-Sendable static under Swift 6 strict
+        // concurrency, for a `yyyy-MM-dd` filename stamp on a fixed POSIX/gregorian basis.
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
+        let day = formatter.string(from: run.date)
+        let base = slug.isEmpty ? "report" : slug
+        return "\(base)-\(day).pdf"
+    }
 }
 
 /// The print/share layout of a brief — a light, document-styled page (not the dark command-center
@@ -223,8 +221,20 @@ struct BriefActivityView: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: self.items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: self.items, applicationActivities: nil)
+        // iPad safety: if UIKit ever presents this as a popover (not the .sheet case), a popover with no
+        // anchor traps with NSGenericException. Anchor it to its own view, centered with no arrow — a
+        // harmless no-op on iPhone and when hosted in a sheet (where popoverPresentationController is nil).
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.permittedArrowDirections = []
+        }
+        return controller
     }
 
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {
+        guard let popover = controller.popoverPresentationController, let view = popover.sourceView else { return }
+        // Center the (zero-size) source rect once the view is laid out so an iPad popover appears centered.
+        popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+    }
 }
