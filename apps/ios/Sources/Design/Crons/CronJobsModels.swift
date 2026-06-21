@@ -194,7 +194,9 @@ struct CronEditorForm: Identifiable {
                 everyMinutes: schedule.everyMinutes,
                 atISO: schedule.atISO,
                 wakeMode: CronJobFieldReader.wakeMode(job),
-                payloadIsCommand: CronJobFieldReader.payloadIsCommand(job)))
+                payloadIsCommand: CronJobFieldReader.payloadIsCommand(job),
+                sessionTarget: target,
+                prompt: payloadText))
     }
 }
 
@@ -212,6 +214,15 @@ struct CronEditSeed {
     /// True when the stored payload is a `command` payload the phone cannot author. Save is refused for
     /// these rather than silently rewriting them to an `agentTurn` / `systemEvent` payload.
     let payloadIsCommand: Bool
+    /// The session target the form was seeded with (a `session:<id>` original is displayed as its safe
+    /// fallback). Compared against the live form so `sessionTarget` is only sent in the patch when the
+    /// operator actually changes the picker — otherwise an unrepresentable original is preserved, not
+    /// overwritten with the fallback.
+    let sessionTarget: CronSessionTarget
+    /// The prompt/instruction text the form was seeded with, so `payload` is only re-sent when edited
+    /// (re-sending rebuilds the payload from the form and would rewrite a job whose payload the editor
+    /// can't faithfully represent).
+    let prompt: String
 }
 
 // MARK: - Validation
@@ -246,6 +257,8 @@ struct CronRequestPayload {
 struct CronEditChanges {
     let scheduleChanged: Bool
     let wakeModeChanged: Bool
+    let sessionTargetChanged: Bool
+    let payloadChanged: Bool
 }
 
 /// Build + validate the request from a form, client-side, before any round-trip. Mirrors the gateway's
@@ -314,7 +327,16 @@ enum CronFormValidator {
                 || trimmed(form.cronExpr) != trimmed(seed.cronExpr)
                 || trimmed(form.everyMinutes) != trimmed(seed.everyMinutes)
                 || trimmed(form.atISO) != trimmed(seed.atISO)
-        return CronEditChanges(scheduleChanged: scheduleChanged, wakeModeChanged: false)
+        // sessionTarget / payload are sent ONLY when the operator changed them: re-sending the form's
+        // fallback rendering of a `session:<id>` target (or rebuilding the payload from a command job the
+        // editor can't represent) would overwrite the stored value. The phone has no wakeMode control.
+        let sessionTargetChanged = form.sessionTarget != seed.sessionTarget
+        let payloadChanged = trimmed(form.prompt) != trimmed(seed.prompt)
+        return CronEditChanges(
+            scheduleChanged: scheduleChanged,
+            wakeModeChanged: false,
+            sessionTargetChanged: sessionTargetChanged,
+            payloadChanged: payloadChanged)
     }
 
     /// A human-readable validation failure for schedule building. `Result.Failure` must conform to
@@ -331,11 +353,19 @@ enum CronFormValidator {
             guard !expr.isEmpty else {
                 return .failure(CronFieldError(message: "Cron expression is required."))
             }
+            // Reject obviously-malformed expressions client-side rather than letting the mutation RPC
+            // create/update a job with an unrunnable spec: standard cron is 5 fields (6 with seconds).
+            let fieldCount = expr.split(whereSeparator: \.isWhitespace).count
+            guard (5...6).contains(fieldCount) else {
+                return .failure(CronFieldError(message: "Cron expression must have 5 fields (e.g. \"0 9 * * *\")."))
+            }
             return .success(AnyCodable(["kind": "cron", "expr": expr]))
         case .every:
             let raw = form.everyMinutes.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let minutes = Int(raw), minutes >= 1 else {
-                return .failure(CronFieldError(message: "Interval must be a whole number of minutes (minimum 1)."))
+            // Upper bound guards against an `Int` overflow trap on `minutes * 60_000` for a huge but
+            // otherwise-valid integer input — that would crash the editor mid-validation.
+            guard let minutes = Int(raw), minutes >= 1, minutes <= Int.max / 60_000 else {
+                return .failure(CronFieldError(message: "Interval must be a whole number of minutes (1 to 35 million)."))
             }
             // Schema is `everyMs` (`>= 1`); convert minutes to ms once here so the field stays operator-
             // friendly while the wire value matches `CronScheduleSchema`.
@@ -344,6 +374,10 @@ enum CronFormValidator {
             let at = form.atISO.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !at.isEmpty else {
                 return .failure(CronFieldError(message: "A run time is required (ISO-8601)."))
+            }
+            // Parse to reject a malformed/non-ISO instant before it reaches the mutation RPC.
+            guard ISO8601DateFormatter().date(from: at) != nil else {
+                return .failure(CronFieldError(message: "Run time must be an ISO-8601 instant (e.g. 2026-06-22T09:00:00Z)."))
             }
             return .success(AnyCodable(["kind": "at", "at": at]))
         }

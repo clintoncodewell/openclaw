@@ -191,9 +191,12 @@ final class CronJobsViewModel {
             enabled: request.enabled,
             agentId: request.agentId.map { AnyCodable($0) },
             schedule: (changes?.scheduleChanged ?? true) ? request.schedule : nil,
-            sessionTarget: request.sessionTarget,
+            // Only re-send sessionTarget / payload when the operator changed them — otherwise a
+            // `session:<id>` target (shown as its fallback) or an unrepresentable payload would be
+            // overwritten by the form's rebuilt value. `editChanges` is always set on the edit path.
+            sessionTarget: (changes?.sessionTargetChanged ?? true) ? request.sessionTarget : nil,
             wakeMode: (changes?.wakeModeChanged ?? true) ? request.wakeMode : nil,
-            payload: request.payload)
+            payload: (changes?.payloadChanged ?? true) ? request.payload : nil)
         let params = CronEditUpdateParams(id: jobId, patch: patch)
         do {
             _ = try await Self.request(appModel: appModel, method: "cron.update", params: params, timeoutSeconds: 20)

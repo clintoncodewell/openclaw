@@ -241,6 +241,10 @@ struct CronEditorView: View {
         ProCard(radius: OpenClawProMetric.cardRadius) {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
+                    // Flip isSaving SYNCHRONOUSLY (and guard) so a rapid second tap can't spawn a second
+                    // save Task before the async path reaches its own guard — that would double cron.add.
+                    guard !self.isSaving else { return }
+                    self.isSaving = true
                     Task { await self.save() }
                 } label: {
                     HStack(spacing: 8) {
@@ -268,13 +272,13 @@ struct CronEditorView: View {
     /// Validate, then create or update via the view model. On success the sheet dismisses (the VM has
     /// already re-fetched the list); on failure the inline error shows and the sheet stays open.
     private func save() async {
+        // isSaving was set synchronously by the button tap; always clear it (covers the invalid path too).
+        defer { self.isSaving = false }
         self.errorText = nil
         switch CronFormValidator.validate(self.form) {
         case let .invalid(message):
             self.errorText = message
         case let .valid(request):
-            self.isSaving = true
-            defer { self.isSaving = false }
             let failure: String?
             if let jobId = self.form.jobId {
                 failure = await self.viewModel.updateJob(appModel: self.appModel, jobId: jobId, request: request)
