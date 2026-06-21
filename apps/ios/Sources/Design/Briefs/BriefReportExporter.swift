@@ -14,13 +14,20 @@ enum BriefReportExporter {
     /// markdown a definite measure so `ImageRenderer` resolves a single, full-height page.
     private static let pageWidth: CGFloat = 540
 
-    /// Render `run` to a single-page PDF written to a temp file, returning its URL (or nil if rendering
-    /// or the file write failed). Must run on the main actor — `ImageRenderer` is `@MainActor`.
+    /// Render `run` to a PDF written to a temp file, returning its URL (or nil if rendering or the file
+    /// write failed). Must run on the main actor — `ImageRenderer` is `@MainActor`.
+    ///
+    /// The report is a SINGLE continuous page sized to the content's full height (the mediaBox is the
+    /// content size, so nothing is ever clipped/truncated regardless of length — a long brief just
+    /// produces a tall page, which reads fine on phone/web like any scrolling document). We render at
+    /// `scale = 1`: SwiftUI `Text`/markdown and shapes draw into the PDF `CGContext` as resolution-
+    /// independent vectors, so a higher scale would only enlarge the backing buffer (memory) without
+    /// sharpening text. The temp file lives in `temporaryDirectory`, which the OS reclaims; a same-day
+    /// re-export of the same job reuses the deterministic filename (overwrite, not accrue).
     @MainActor
     static func exportPDF(run: BriefRun) -> URL? {
         let renderer = ImageRenderer(content: BriefReportPage(run: run).frame(width: pageWidth))
-        // 2x so any rasterized content (rare here) stays sharp; text/shapes render as PDF vectors.
-        renderer.scale = 2
+        renderer.scale = 1
 
         let pdfData = NSMutableData()
         var rendered = false
