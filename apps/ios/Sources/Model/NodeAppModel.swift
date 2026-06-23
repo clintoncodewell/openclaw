@@ -3722,10 +3722,13 @@ extension NodeAppModel {
                 idempotencyKey: event.commandId,
                 attachments: [])
             await self.syncWatchAppSnapshot(reason: "watch_chat_sent", includeChat: true)
-            let completed = await transport.waitForRunCompletion(
+            // Only push a fresh watch snapshot once the run actually completes; a wait-window
+            // expiry on a still-running turn, a terminal error, or an RPC hiccup all leave the
+            // already-sent "sent" snapshot in place rather than reporting a premature result.
+            let outcome = await transport.waitForRunOutcome(
                 runId: response.runId,
                 timeoutMs: Self.watchChatCompletionWaitMs)
-            guard completed else { return true }
+            guard outcome == .completed else { return true }
             await self.syncWatchAppSnapshot(reason: "watch_chat_completed", includeChat: true)
             return true
         } catch {

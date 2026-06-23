@@ -104,7 +104,7 @@ private func makeViewModel(
     compactSessionHook: (@Sendable (String) async throws -> Void)? = nil,
     setSessionModelHook: (@Sendable (String?) async throws -> Void)? = nil,
     setSessionThinkingHook: (@Sendable (String) async throws -> Void)? = nil,
-    waitForRunCompletionHook: (@Sendable (String, Int) async -> Bool)? = nil,
+    waitForRunOutcomeHook: (@Sendable (String, Int) async -> OpenClawAgentWaitOutcome)? = nil,
     healthResponses: [Bool] = [true],
     initialThinkingLevel: String? = nil,
     onSessionChanged: (@MainActor (String) -> Void)? = nil,
@@ -122,7 +122,7 @@ private func makeViewModel(
         compactSessionHook: compactSessionHook,
         setSessionModelHook: setSessionModelHook,
         setSessionThinkingHook: setSessionThinkingHook,
-        waitForRunCompletionHook: waitForRunCompletionHook,
+        waitForRunOutcomeHook: waitForRunOutcomeHook,
         healthResponses: healthResponses)
     let vm = await MainActor.run {
         OpenClawChatViewModel(
@@ -347,7 +347,7 @@ private final class TestChatTransport: @unchecked Sendable, OpenClawChatTranspor
     private let compactSessionHook: (@Sendable (String) async throws -> Void)?
     private let setSessionModelHook: (@Sendable (String?) async throws -> Void)?
     private let setSessionThinkingHook: (@Sendable (String) async throws -> Void)?
-    private let waitForRunCompletionHook: (@Sendable (String, Int) async -> Bool)?
+    private let waitForRunOutcomeHook: (@Sendable (String, Int) async -> OpenClawAgentWaitOutcome)?
     private let healthResponses: [Bool]
 
     private let stream: AsyncStream<OpenClawChatTransportEvent>
@@ -364,7 +364,7 @@ private final class TestChatTransport: @unchecked Sendable, OpenClawChatTranspor
         compactSessionHook: (@Sendable (String) async throws -> Void)? = nil,
         setSessionModelHook: (@Sendable (String?) async throws -> Void)? = nil,
         setSessionThinkingHook: (@Sendable (String) async throws -> Void)? = nil,
-        waitForRunCompletionHook: (@Sendable (String, Int) async -> Bool)? = nil,
+        waitForRunOutcomeHook: (@Sendable (String, Int) async -> OpenClawAgentWaitOutcome)? = nil,
         healthResponses: [Bool] = [true])
     {
         self.historyResponses = historyResponses
@@ -377,7 +377,7 @@ private final class TestChatTransport: @unchecked Sendable, OpenClawChatTranspor
         self.compactSessionHook = compactSessionHook
         self.setSessionModelHook = setSessionModelHook
         self.setSessionThinkingHook = setSessionThinkingHook
-        self.waitForRunCompletionHook = waitForRunCompletionHook
+        self.waitForRunOutcomeHook = waitForRunOutcomeHook
         self.healthResponses = healthResponses
         var cont: AsyncStream<OpenClawChatTransportEvent>.Continuation!
         self.stream = AsyncStream { c in
@@ -499,9 +499,9 @@ private final class TestChatTransport: @unchecked Sendable, OpenClawChatTranspor
         return self.healthResponses.last ?? true
     }
 
-    func waitForRunCompletion(runId: String, timeoutMs: Int) async -> Bool {
+    func waitForRunOutcome(runId: String, timeoutMs: Int) async -> OpenClawAgentWaitOutcome {
         await self.state.waitCompletionRunIdsAppend(runId)
-        return await self.waitForRunCompletionHook?(runId, timeoutMs) ?? false
+        return await self.waitForRunOutcomeHook?(runId, timeoutMs) ?? .waitError
     }
 
     func emit(_ evt: OpenClawChatTransportEvent) {
@@ -797,7 +797,7 @@ struct ChatViewModelTests {
             ])
         let (transport, vm) = await makeViewModel(
             historyResponses: [history1, history2, history3],
-            waitForRunCompletionHook: { _, _ in true })
+            waitForRunOutcomeHook: { _, _ in .completed })
         try await loadAndWaitBootstrap(vm: vm, sessionId: sessionId)
 
         await sendUserMessage(vm, text: "hello")
@@ -3906,5 +3906,98 @@ struct ChatViewModelTests {
                     errorMessage: nil)))
 
         try await waitUntil("pending run clears") { await MainActor.run { vm.pendingRunCount == 0 } }
+    }
+
+    @Test func `wait still-running re-attaches then completes without failing the turn`() async throws {
+        let sessionId = "sess-main"
+        let now = (Date().timeIntervalSince1970 * 1000) + 10000
+        let history1 = historyPayload(sessionId: sessionId)
+        let answered = historyPayload(
+            sessionId: sessionId,
+            messages: [
+                chatTextMessage(role: "assistant", text: "long answer", timestamp: now + 60000),
+            ])
+        // First wait round returns .stillRunning (wait window elapsed, run alive), second .completed.
+        let outcomes = OutcomeSequence([.stillRunning, .completed])
+        let (transport, vm) = await makeViewModel(
+            historyResponses: [history1, history1, answered],
+            waitForRunOutcomeHook: { _, _ in await outcomes.next() })
+        try await loadAndWaitBootstrap(vm: vm, sessionId: sessionId)
+
+        await sendUserMessage(vm, text: "go")
+        // The run stays pending across the first .stillRunning round; it is never failed.
+        try await waitUntil("agent wait re-attached at least twice") {
+            await transport.waitCompletionRunIds().count >= 2
+        }
+        #expect(await MainActor.run { vm.errorText == nil })
+
+        try await waitUntil("re-attach resolves to the answer") {
+            await MainActor.run {
+                vm.pendingRunCount == 0 &&
+                    vm.errorText == nil &&
+                    vm.messages.contains { message in
+                        message.role == "assistant" &&
+                            message.content.contains { $0.text == "long answer" }
+                    }
+            }
+        }
+    }
+
+    @Test func `wait failure marks the turn failed and clears the pending run`() async throws {
+        let sessionId = "sess-main"
+        let history = historyPayload(sessionId: sessionId, messages: [])
+        let (_, vm) = await makeViewModel(
+            historyResponses: [history, history],
+            waitForRunOutcomeHook: { _, _ in .failed("provider exploded") })
+        try await loadAndWaitBootstrap(vm: vm, sessionId: sessionId)
+
+        await sendUserMessage(vm, text: "go")
+        try await waitUntil("wait failure surfaces as failed turn") {
+            await MainActor.run {
+                vm.pendingRunCount == 0 &&
+                    vm.errorText == "provider exploded" &&
+                    vm.streamingAssistantText == nil &&
+                    vm.pendingToolCalls.isEmpty
+            }
+        }
+    }
+
+    @Test func `history inFlightRun adopts an untracked run and keeps the turn working`() async throws {
+        let sessionId = "sess-main"
+        // Bootstrap history carries an in-flight run started elsewhere; adopt it as pending.
+        let history = OpenClawChatHistoryPayload(
+            sessionKey: "main",
+            sessionId: sessionId,
+            messages: [],
+            thinkingLevel: "off",
+            inFlightRun: OpenClawChatInFlightRun(runId: "adopted-run", text: "partial answer"))
+        let (transport, vm) = await makeViewModel(
+            historyResponses: [history],
+            waitForRunOutcomeHook: { _, _ in .stillRunning })
+        try await loadAndWaitBootstrap(vm: vm, sessionId: sessionId)
+
+        try await waitUntil("adopted run is pending and re-attaching") {
+            await MainActor.run { vm.pendingRunCount == 1 && vm.errorText == nil }
+        }
+        #expect(await MainActor.run { vm.streamingAssistantText == "partial answer" })
+        try await waitUntil("adopted run re-attaches via agent.wait") {
+            await transport.waitCompletionRunIds().contains("adopted-run")
+        }
+    }
+}
+
+// Serialized stub of sequential agent.wait outcomes for the re-attach loop tests.
+private actor OutcomeSequence {
+    private var outcomes: [OpenClawAgentWaitOutcome]
+    private let fallback: OpenClawAgentWaitOutcome
+
+    init(_ outcomes: [OpenClawAgentWaitOutcome], fallback: OpenClawAgentWaitOutcome = .stillRunning) {
+        self.outcomes = outcomes
+        self.fallback = fallback
+    }
+
+    func next() -> OpenClawAgentWaitOutcome {
+        guard !self.outcomes.isEmpty else { return self.fallback }
+        return self.outcomes.removeFirst()
     }
 }

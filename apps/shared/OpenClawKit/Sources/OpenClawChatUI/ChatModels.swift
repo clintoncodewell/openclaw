@@ -277,11 +277,40 @@ public struct OpenClawChatMessage: Codable, Identifiable, Sendable {
     }
 }
 
+// chat.history attaches `inFlightRun` whenever a chat-send run is still streaming for this
+// session+agent. The runId is the recovery contract: the gateway keeps it even when oversized
+// buffered text must be dropped, so a foreground/reconnect can re-attach a run whose local wait
+// task was lost. Shape mirrors the gateway (`{ runId, text }`).
+public struct OpenClawChatInFlightRun: Codable, Sendable, Equatable {
+    public let runId: String
+    public let text: String?
+
+    public init(runId: String, text: String? = nil) {
+        self.runId = runId
+        self.text = text
+    }
+}
+
 public struct OpenClawChatHistoryPayload: Codable, Sendable {
     public let sessionKey: String
     public let sessionId: String?
     public let messages: [AnyCodable]?
     public let thinkingLevel: String?
+    public let inFlightRun: OpenClawChatInFlightRun?
+
+    public init(
+        sessionKey: String,
+        sessionId: String? = nil,
+        messages: [AnyCodable]? = nil,
+        thinkingLevel: String? = nil,
+        inFlightRun: OpenClawChatInFlightRun? = nil)
+    {
+        self.sessionKey = sessionKey
+        self.sessionId = sessionId
+        self.messages = messages
+        self.thinkingLevel = thinkingLevel
+        self.inFlightRun = inFlightRun
+    }
 }
 
 public struct OpenClawSessionPreviewItem: Codable, Hashable, Sendable {

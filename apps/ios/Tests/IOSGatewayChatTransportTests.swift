@@ -1,4 +1,5 @@
 import Foundation
+import OpenClawChatUI
 import OpenClawKit
 import OpenClawProtocol
 import Testing
@@ -11,13 +12,54 @@ import Testing
         return try #require(value as? [String: Any])
     }
 
-    @Test func agentWaitTreatsSuccessAsCompletion() {
-        #expect(IOSGatewayChatTransport.isAgentWaitCompletionStatus("success"))
-        #expect(IOSGatewayChatTransport.isAgentWaitCompletionStatus(" ok "))
-        #expect(IOSGatewayChatTransport.isAgentWaitCompletionStatus("completed"))
-        #expect(IOSGatewayChatTransport.isAgentWaitCompletionStatus("succeeded"))
-        #expect(!IOSGatewayChatTransport.isAgentWaitCompletionStatus("timeout"))
-        #expect(!IOSGatewayChatTransport.isAgentWaitCompletionStatus("failed"))
+    // The gateway agent.wait surface only ever returns status "ok" | "error" | "timeout"
+    // (plus "pending" from the run-wait layer). Tests assert against that real set.
+
+    @Test func agentWaitOutcomeMapsOkToCompleted() {
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "ok", error: nil) == .completed)
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: " OK ", error: nil) == .completed)
+    }
+
+    @Test func agentWaitOutcomeMapsErrorToFailed() {
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "error", error: "boom") == .failed("boom"))
+        // A failed run with no message still surfaces as a failure with a default reason.
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "error", error: nil) == .failed("Chat failed"))
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "error", error: "  ") == .failed("Chat failed"))
+    }
+
+    @Test func agentWaitOutcomeKeepsLiveTimeoutStillRunning() {
+        // Live wait-window elapse: status "timeout" with NO endedAt and NO stopReason must re-attach.
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "timeout", error: nil) == .stillRunning)
+        // pendingError grace frame is non-terminal even if other fields look terminal-ish.
+        #expect(
+            IOSGatewayChatTransport.agentWaitOutcome(
+                status: "timeout",
+                error: nil,
+                endedAt: 1234,
+                stopReason: "rpc",
+                pendingError: true) == .stillRunning)
+    }
+
+    @Test func agentWaitOutcomeMapsTerminalTimeoutToFailed() {
+        // Genuinely terminal aborted/timed-out run: status "timeout" carries endedAt (and stopReason).
+        #expect(
+            IOSGatewayChatTransport.agentWaitOutcome(
+                status: "timeout",
+                error: "aborted",
+                endedAt: 1234,
+                stopReason: "rpc") == .failed("aborted"))
+        // endedAt alone (no error, no stopReason) is still terminal -> failed with default reason.
+        #expect(
+            IOSGatewayChatTransport.agentWaitOutcome(status: "timeout", error: nil, endedAt: 1234) == .failed("Chat failed"))
+        // A non-empty stopReason without endedAt is also terminal (defensive: terminal aborts carry both).
+        #expect(
+            IOSGatewayChatTransport.agentWaitOutcome(status: "timeout", error: nil, stopReason: "stop") == .failed("Chat failed"))
+    }
+
+    @Test func agentWaitOutcomeMapsPendingAndUnknownStillRunning() {
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "pending", error: nil) == .stillRunning)
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: "weird", error: nil) == .stillRunning)
+        #expect(IOSGatewayChatTransport.agentWaitOutcome(status: nil, error: nil) == .stillRunning)
     }
 
     @Test func agentWaitTimeoutAddsGatewayMargin() {
@@ -26,12 +68,28 @@ import Testing
         #expect(IOSGatewayChatTransport.agentWaitRequestTimeoutSeconds(timeoutMs: 30000) == 35)
     }
 
-    @Test func agentWaitCompletionDecodesFallbackRunId() throws {
-        let data = Data(#"{"status":"completed"}"#.utf8)
-        let completion = try IOSGatewayChatTransport.decodeAgentWaitCompletion(data, fallbackRunId: "run-local")
-        #expect(completion.runId == "run-local")
-        #expect(completion.status == "completed")
-        #expect(completion.completed)
+    @Test func agentWaitOutcomeDecodesTerminalSnapshot() throws {
+        let completed = try IOSGatewayChatTransport.decodeAgentWaitOutcome(Data(#"{"status":"ok"}"#.utf8))
+        #expect(completed == .completed)
+
+        // Live wait-window elapse: timeout with no endedAt re-attaches.
+        let liveTimeout = try IOSGatewayChatTransport.decodeAgentWaitOutcome(
+            Data(#"{"status":"timeout","timeoutPhase":"gateway_draining"}"#.utf8))
+        #expect(liveTimeout == .stillRunning)
+
+        // Terminal aborted run: timeout with endedAt+stopReason fails the turn.
+        let abortedTimeout = try IOSGatewayChatTransport.decodeAgentWaitOutcome(
+            Data(#"{"status":"timeout","endedAt":1234,"stopReason":"rpc","error":"aborted"}"#.utf8))
+        #expect(abortedTimeout == .failed("aborted"))
+
+        // pendingError grace frame stays non-terminal.
+        let pendingTimeout = try IOSGatewayChatTransport.decodeAgentWaitOutcome(
+            Data(#"{"status":"timeout","pendingError":true}"#.utf8))
+        #expect(pendingTimeout == .stillRunning)
+
+        let failed = try IOSGatewayChatTransport.decodeAgentWaitOutcome(
+            Data(#"{"status":"error","error":"nope"}"#.utf8))
+        #expect(failed == .failed("nope"))
     }
 
     @Test func listSessionsParamsIncludeGlobalSessionsButNotUnknown() throws {

@@ -44,24 +44,58 @@ struct IOSGatewayChatTransport: OpenClawChatTransport {
         var timeoutMs: Int
     }
 
+    // The gateway's agent.wait response status is the closed set "ok" | "error" | "timeout"
+    // (plus "pending" from the run-wait layer). "timeout" is OVERLOADED: it is returned both for
+    // a live wait-window elapse (run still in flight, non-terminal) AND for a genuinely terminal
+    // aborted/timed-out run. The reliable discriminator is `endedAt`: the gateway always sets it on
+    // terminal snapshots (agent-wait-dedupe.ts endedAt = endedAt ?? entry.ts; chat.ts abort writes
+    // status:"timeout" with endedAt+stopReason) and always omits it on the live wait-window-elapse
+    // and pendingError grace frames (agent.ts respond sites; agent-job createPendingErrorTimeoutSnapshot).
+    // `pendingError` is an explicit non-terminal flag. livenessState/timeoutPhase/providerStarted are
+    // not used for the user-facing outcome today, so they are intentionally not decoded here.
     private struct AgentWaitResponse: Codable {
         var runId: String?
         var status: String?
         var error: String?
+        var stopReason: String?
+        var endedAt: Double?
+        var pendingError: Bool?
     }
 
-    struct AgentWaitCompletion: Equatable {
-        var runId: String
-        var status: String
-        var completed: Bool
-    }
-
-    static func isAgentWaitCompletionStatus(_ status: String) -> Bool {
-        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "ok", "completed", "success", "succeeded":
-            true
+    /// Map an agent.wait response to the closed outcome the view model consumes.
+    /// The gateway only ever returns status "ok" | "error" | "timeout" | "pending".
+    /// - "ok" -> `.completed`.
+    /// - "error" -> `.failed`.
+    /// - "timeout" is terminal (aborted/timed_out) ONLY when it carries `endedAt` (or a non-empty
+    ///   `stopReason`); a live wait-window elapse has neither, so it stays `.stillRunning` and
+    ///   re-attaches the SAME run. `pendingError` forces `.stillRunning` (retry grace, non-terminal).
+    /// - "pending" and any unknown status -> `.stillRunning`: a re-wait either resolves to a real
+    ///   terminal status or keeps the turn working.
+    static func agentWaitOutcome(
+        status rawStatus: String?,
+        error: String?,
+        endedAt: Double? = nil,
+        stopReason: String? = nil,
+        pendingError: Bool? = nil) -> OpenClawAgentWaitOutcome
+    {
+        let normalizedStatus = (rawStatus ?? "unknown")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let trimmedError = error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let failureReason = trimmedError.isEmpty ? "Chat failed" : trimmedError
+        switch normalizedStatus {
+        case "ok":
+            return .completed
+        case "error":
+            return .failed(failureReason)
+        case "timeout":
+            let hasStopReason = (stopReason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            let isTerminal = (endedAt != nil || hasStopReason) && pendingError != true
+            return isTerminal ? .failed(failureReason) : .stillRunning
+        case "pending":
+            return .stillRunning
         default:
-            false
+            return .stillRunning
         }
     }
 
@@ -94,13 +128,15 @@ struct IOSGatewayChatTransport: OpenClawChatTransport {
         return try self.encodeParams(params)
     }
 
-    static func decodeAgentWaitCompletion(_ data: Data, fallbackRunId: String) throws -> AgentWaitCompletion {
+    // Pure decode for testability: a successful agent.wait RPC frame -> closed outcome.
+    static func decodeAgentWaitOutcome(_ data: Data) throws -> OpenClawAgentWaitOutcome {
         let decoded = try JSONDecoder().decode(AgentWaitResponse.self, from: data)
-        let status = (decoded.status ?? "unknown").lowercased()
-        return AgentWaitCompletion(
-            runId: decoded.runId ?? fallbackRunId,
-            status: status,
-            completed: self.isAgentWaitCompletionStatus(status))
+        return self.agentWaitOutcome(
+            status: decoded.status,
+            error: decoded.error,
+            endedAt: decoded.endedAt,
+            stopReason: decoded.stopReason,
+            pendingError: decoded.pendingError)
     }
 
     private static func makeCreateSessionParamsJSON(
@@ -224,9 +260,11 @@ struct IOSGatewayChatTransport: OpenClawChatTransport {
         }
     }
 
-    func waitForRunCompletion(runId rawRunId: String, timeoutMs: Int) async -> Bool {
+    func waitForRunOutcome(runId rawRunId: String, timeoutMs: Int) async -> OpenClawAgentWaitOutcome {
         let runId = rawRunId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !runId.isEmpty else { return false }
+        // No runId means nothing to re-attach to; surface a wait error so the caller backs off
+        // and reconciles via chat.history rather than treating it as a finished run.
+        guard !runId.isEmpty else { return .waitError }
 
         do {
             let json = try Self.makeAgentWaitParamsJSON(runId: runId, timeoutMs: timeoutMs)
@@ -236,17 +274,19 @@ struct IOSGatewayChatTransport: OpenClawChatTransport {
                 method: "agent.wait",
                 paramsJSON: json,
                 timeoutSeconds: requestTimeoutSeconds)
-            let completion = try Self.decodeAgentWaitCompletion(res, fallbackRunId: runId)
-            GatewayDiagnostics.log("agent.wait completed runId=\(completion.runId) status=\(completion.status)")
-            if !completion.completed {
+            let outcome = try Self.decodeAgentWaitOutcome(res)
+            GatewayDiagnostics.log("agent.wait outcome runId=\(runId) outcome=\(outcome)")
+            if outcome != .completed {
                 Self.logger.warning(
-                    "agent.wait status \(completion.status, privacy: .public) runId=\(runId, privacy: .public)")
+                    "agent.wait outcome \(String(describing: outcome), privacy: .public) runId=\(runId, privacy: .public)")
             }
-            return completion.completed
+            return outcome
         } catch {
+            // A thrown RPC error is a transport hiccup (socket timeout / disconnect), NOT a run
+            // failure: the run may still be in flight, so report .waitError and let the loop retry.
             Self.logger.warning("agent.wait failed \(error.localizedDescription, privacy: .public)")
             GatewayDiagnostics.log("agent.wait failed runId=\(runId) error=\(error.localizedDescription)")
-            return false
+            return .waitError
         }
     }
 

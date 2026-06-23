@@ -54,9 +54,26 @@ public final class OpenClawChatViewModel {
     private var lastIssuedHistoryRequestID: UInt64 = 0
     private var latestAppliedHistoryRequestID: UInt64 = 0
 
+    // One bounded re-attach loop per runId. Re-issuing agent.wait resumes the SAME run after a
+    // wait-window expiry, so a long-running turn stays in `pendingRuns` (typing indicator +
+    // disabled composer) until it truly completes or genuinely errors — it is never failed just
+    // because the wait window elapsed. Cancelled on clear/session-switch/deinit (see STEP 4).
     @ObservationIgnored
-    private nonisolated(unsafe) var pendingRunTimeoutTasks: [String: Task<Void, Never>] = [:]
-    private let pendingRunTimeoutMs: UInt64 = 120_000
+    private nonisolated(unsafe) var runWaitTasks: [String: Task<Void, Never>] = [:]
+    // Each agent.wait round-trip waits this long server-side before returning a non-terminal
+    // "timeout" frame; the loop then re-attaches. Lives server-side, so a .stillRunning continue
+    // needs no client sleep.
+    private let runWaitWindowMs: Int = 120_000
+    // Transient agent.wait RPC failures back off on this schedule, then steady-state, so we never
+    // tight-spin or battery-drain. After the total cap we keep the run pending but show a soft
+    // "still working" notice instead of failing a live run.
+    private static let runWaitErrorBackoffMs: [UInt64] = [2000, 5000, 15000, 30000]
+    private static let runWaitErrorSteadyMs: UInt64 = 30000
+    private static let runWaitTotalCapMs: UInt64 = 30 * 60 * 1000
+    // Defensive floor between consecutive agent.wait round-trips on a .stillRunning continue. A live
+    // wait blocks ~120s server-side so this is normally a no-op, but it guarantees the loop cannot
+    // tight-spin if agent.wait ever returns .stillRunning quickly (e.g. a fast non-terminal frame).
+    private static let runWaitMinIntervalMs: UInt64 = 1000
     private static let postSendRefreshDelaysMs: [UInt64] = [
         1500,
         4000,
@@ -156,7 +173,7 @@ public final class OpenClawChatViewModel {
     deinit {
         self.eventTask?.cancel()
         self.bootstrapTask?.cancel()
-        for (_, task) in self.pendingRunTimeoutTasks {
+        for (_, task) in self.runWaitTasks {
             task.cancel()
         }
     }
@@ -390,7 +407,42 @@ public final class OpenClawChatViewModel {
         if syncThinkingOptions || appliedThinkingLevel != nil {
             self.syncThinkingLevelOptions()
         }
+        self.reconcileInFlightRun(payload.inFlightRun, sessionSnapshot: request.session)
         return true
+    }
+
+    // Reconcile/cross-check signal: if the gateway reports a still-streaming chat-send run that we
+    // are not already tracking, adopt it (insert into pendingRuns, seed any buffered text, and arm
+    // the re-attach loop). This recovers a run started elsewhere or whose local wait task was lost
+    // across a reconnect/foreground. The terminal lifecycle flips the run out of inFlightRun, so a
+    // finished run is never re-adopted here — the existing event/refresh paths settle that case.
+    private func reconcileInFlightRun(
+        _ inFlightRun: OpenClawChatInFlightRun?,
+        sessionSnapshot: SessionSnapshot)
+    {
+        guard self.isCurrentSession(sessionSnapshot) else { return }
+        guard let inFlightRun else { return }
+        let runId = inFlightRun.runId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !runId.isEmpty, !self.pendingRuns.contains(runId) else { return }
+
+        self.logDiagnostic(
+            "chat.ui adopt inFlightRun sessionKey=\(sessionSnapshot.key) "
+                + "runId=\(runId)")
+        self.errorText = nil
+        self.pendingRuns.insert(runId)
+        if let text = inFlightRun.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty
+        {
+            self.streamingAssistantText = text
+        }
+        // Adopt the newest visible user turn's timestamp as the answer cutoff so the loop's
+        // history checks treat a reply landing after it as this run's completion.
+        let userMessageTimestamp = Self.latestUserTurn(in: self.messages)?.timestamp
+            ?? Date().timeIntervalSince1970 * 1000
+        self.armRunCompletionRefresh(
+            runId: runId,
+            sessionSnapshot: sessionSnapshot,
+            userMessageTimestamp: userMessageTimestamp)
     }
 
     private func startBootstrap(sessionKey requestedSessionKey: String? = nil) {
@@ -800,7 +852,6 @@ public final class OpenClawChatViewModel {
         let messageText = trimmed.isEmpty && !self.attachments.isEmpty ? "See attached." : trimmed
         let thinkingLevel = self.thinkingLevel
         self.pendingRuns.insert(runId)
-        self.armPendingRunTimeout(runId: runId)
         self.logDiagnostic(
             "chat.ui send queued sessionKey=\(sessionKey) "
                 + "localRunId=\(runId) pending=\(self.pendingRunCount)")
@@ -877,7 +928,6 @@ public final class OpenClawChatViewModel {
                 self.clearPendingRun(runId)
                 self.pendingRuns.insert(response.runId)
                 self.pendingLocalUserEchoMessageIDsByRunID[response.runId] = pendingUserMessageID
-                self.armPendingRunTimeout(runId: response.runId)
             }
             let historyContext = self.beginHistoryRequest(for: sessionSnapshot)
             await self.refreshHistoryAfterRun(historyRequest: historyContext)
@@ -1749,23 +1799,123 @@ public final class OpenClawChatViewModel {
         }
     }
 
+    // Bounded re-attach loop: replaces both the blind wall-clock timeout and the one-shot wait.
+    // While the run stays pending and the session is current, it re-issues agent.wait; a
+    // wait-window expiry ("timeout") is .stillRunning and simply re-waits the SAME run (no client
+    // sleep — the window lives server-side), a terminal error becomes the failed state, and a
+    // transient RPC failure backs off then retries. The turn is never failed just because the
+    // wait window elapsed. One Task per runId, cancelled on clear/session-switch/deinit (STEP 4).
     private func armRunCompletionRefresh(
         runId: String,
         sessionSnapshot: SessionSnapshot,
         userMessageTimestamp: Double)
     {
-        let timeoutMs = Int(pendingRunTimeoutMs)
+        self.runWaitTasks[runId]?.cancel()
+        let timeoutMs = self.runWaitWindowMs
         let transport = self.transport
-        Task { [weak self, transport] in
-            let observedCompletion = await transport.waitForRunCompletion(runId: runId, timeoutMs: timeoutMs)
-            guard observedCompletion else { return }
-            _ = await self?.refreshIfPending(
-                runId: runId,
-                sessionSnapshot: sessionSnapshot,
-                after: userMessageTimestamp,
-                diagnostic: "chat.ui run completion refresh sessionKey=\(sessionSnapshot.key) "
-                    + "runId=\(runId)")
+        self.runWaitTasks[runId] = Task { [weak self, transport] in
+            var waitErrorIndex = 0
+            var elapsedErrorBackoffMs: UInt64 = 0
+            while true {
+                if Task.isCancelled { return }
+                // Re-check liveness on the actor before every round-trip so a clear/session-switch
+                // that raced the await stops us before another wait is issued. This Task inherits the
+                // view model's @MainActor isolation, so member accesses stay on the main actor.
+                // Use the weak ref only for the synchronous gate so the VM is not retained across the
+                // (up to ~125s) agent.wait round-trip — cancellation on deinit must still fire.
+                guard self?.isRunWaitActive(runId: runId, sessionSnapshot: sessionSnapshot) == true else { return }
+
+                let waitStartedAt = DispatchTime.now()
+                let outcome = await transport.waitForRunOutcome(runId: runId, timeoutMs: timeoutMs)
+                if Task.isCancelled { return }
+                guard let self else { return }
+
+                switch outcome {
+                case .completed:
+                    // The run reached a successful terminal snapshot; refreshIfPending clears the
+                    // run only once the assistant reply is actually in history.
+                    _ = await self.refreshIfPending(
+                        runId: runId,
+                        sessionSnapshot: sessionSnapshot,
+                        after: userMessageTimestamp,
+                        diagnostic: "chat.ui run completion refresh sessionKey=\(sessionSnapshot.key) "
+                            + "runId=\(runId)")
+                    return
+                case let .failed(message):
+                    // Genuine terminal error/abort — this is the only path that fails the turn from
+                    // the wait loop, and only as a fallback when the event stream missed the failure.
+                    self.failPendingRunFromWait(
+                        runId: runId,
+                        sessionSnapshot: sessionSnapshot,
+                        message: message)
+                    return
+                case .stillRunning:
+                    // Wait window elapsed but the run is still in flight; re-attach.
+                    // Reset error backoff: a successful (non-error) round-trip happened.
+                    waitErrorIndex = 0
+                    elapsedErrorBackoffMs = 0
+                    // The live wait blocks ~120s server-side so this is normally a no-op, but enforce a
+                    // minimum interval so a fast .stillRunning frame can never tight-spin the loop.
+                    let elapsedMs = (DispatchTime.now().uptimeNanoseconds - waitStartedAt.uptimeNanoseconds) / 1_000_000
+                    if elapsedMs < Self.runWaitMinIntervalMs {
+                        try? await Task.sleep(nanoseconds: (Self.runWaitMinIntervalMs - elapsedMs) * 1_000_000)
+                        if Task.isCancelled { return }
+                    }
+                    continue
+                case .waitError:
+                    // Transient transport hiccup. Bound the backoff RAMP so we never spin: past the
+                    // cap, surface a soft "still working" notice WITHOUT failing the run, then keep
+                    // retrying at the steady interval so a recovered gateway auto-resolves the run
+                    // without the user having to tap refresh.
+                    if elapsedErrorBackoffMs >= Self.runWaitTotalCapMs {
+                        self.softNotifyRunWaitStillWorking(runId: runId, sessionSnapshot: sessionSnapshot)
+                        try? await Task.sleep(nanoseconds: Self.runWaitErrorSteadyMs * 1_000_000)
+                        if Task.isCancelled { return }
+                        continue
+                    }
+                    let delayMs = waitErrorIndex < Self.runWaitErrorBackoffMs.count
+                        ? Self.runWaitErrorBackoffMs[waitErrorIndex]
+                        : Self.runWaitErrorSteadyMs
+                    waitErrorIndex += 1
+                    elapsedErrorBackoffMs += delayMs
+                    try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                    continue
+                }
+            }
         }
+    }
+
+    // Liveness gate for the re-attach loop: keep waiting only while this run is still pending and
+    // the session has not switched out from under us.
+    private func isRunWaitActive(runId: String, sessionSnapshot: SessionSnapshot) -> Bool {
+        self.isCurrentSession(sessionSnapshot) && self.pendingRuns.contains(runId)
+    }
+
+    // Terminal error reported by the re-attach loop (event stream missed it). Mirrors the genuine
+    // event-driven failure path: set errorText, clear the run, drop tool/streaming state.
+    private func failPendingRunFromWait(
+        runId: String,
+        sessionSnapshot: SessionSnapshot,
+        message: String)
+    {
+        guard self.isRunWaitActive(runId: runId, sessionSnapshot: sessionSnapshot) else { return }
+        self.logDiagnostic(
+            "chat.ui run wait failed sessionKey=\(sessionSnapshot.key) "
+                + "runId=\(runId) error=\(message)")
+        self.errorText = message
+        self.clearPendingRun(runId)
+        self.pendingToolCallsById = [:]
+        self.streamingAssistantText = nil
+    }
+
+    // After the wait-error cap we keep the run pending (composer disabled, typing indicator shown)
+    // and only nudge the user toward a manual refresh — a live run is never falsely marked failed.
+    private func softNotifyRunWaitStillWorking(runId: String, sessionSnapshot: SessionSnapshot) {
+        guard self.isRunWaitActive(runId: runId, sessionSnapshot: sessionSnapshot) else { return }
+        self.logDiagnostic(
+            "chat.ui run wait soft notice sessionKey=\(sessionSnapshot.key) "
+                + "runId=\(runId)")
+        self.errorText = "Still working… tap refresh if this takes much longer."
     }
 
     private func refreshIfPending(
@@ -1915,29 +2065,14 @@ public final class OpenClawChatViewModel {
         }
     }
 
-    private func armPendingRunTimeout(runId: String) {
-        self.pendingRunTimeoutTasks[runId]?.cancel()
-        self.pendingRunTimeoutTasks[runId] = Task { [weak self] in
-            let timeoutMs = await MainActor.run { self?.pendingRunTimeoutMs ?? 0 }
-            try? await Task.sleep(nanoseconds: timeoutMs * 1_000_000)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                guard self.pendingRuns.contains(runId) else { return }
-                self.logDiagnostic(
-                    "chat.ui pending timeout sessionKey=\(self.sessionKey) "
-                        + "runId=\(runId)")
-                self.clearPendingRun(runId)
-                self.errorText = "Timed out waiting for a reply; try again or refresh."
-            }
-        }
-    }
-
     private func clearPendingRun(_ runId: String) {
         let wasPending = self.pendingRuns.contains(runId)
         self.pendingRuns.remove(runId)
         self.pendingLocalUserEchoMessageIDsByRunID[runId] = nil
-        self.pendingRunTimeoutTasks[runId]?.cancel()
-        self.pendingRunTimeoutTasks[runId] = nil
+        // Cancelling the re-attach loop drops its awaiting agent.wait continuation, so no further
+        // re-waits are issued once a run is cleared (terminal event, navigation, or completion).
+        self.runWaitTasks[runId]?.cancel()
+        self.runWaitTasks[runId] = nil
         if wasPending {
             self.logDiagnostic(
                 "chat.ui pending cleared sessionKey=\(self.sessionKey) "
@@ -1947,10 +2082,10 @@ public final class OpenClawChatViewModel {
 
     private func clearPendingRuns(reason: String?) {
         let runIds = Array(pendingRuns)
-        for runId in self.pendingRuns {
-            self.pendingRunTimeoutTasks[runId]?.cancel()
+        for (_, task) in self.runWaitTasks {
+            task.cancel()
         }
-        self.pendingRunTimeoutTasks.removeAll()
+        self.runWaitTasks.removeAll()
         self.pendingRuns.removeAll()
         self.pendingLocalUserEchoMessageIDsByRunID.removeAll()
         if let reason, !reason.isEmpty {

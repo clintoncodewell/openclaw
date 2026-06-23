@@ -9,6 +9,25 @@ public enum OpenClawChatTransportEvent: Sendable {
     case seqGap
 }
 
+/// Closed outcome of a single `agent.wait` round-trip. The gateway returns a *success* RPC
+/// frame whose `status` distinguishes a finished run from one whose wait window merely elapsed
+/// while it is still in flight, so callers must not collapse this to a Bool: a wait-window
+/// expiry is `.stillRunning` (re-attach), only a terminal error/abort is `.failed`, and a
+/// dropped/timed-out RPC socket is `.waitError` (transient transport hiccup, retry with backoff).
+public enum OpenClawAgentWaitOutcome: Sendable, Equatable {
+    /// Run reached a successful terminal snapshot (gateway status "ok").
+    case completed
+    /// Wait window merely elapsed while the run is still in flight (gateway status "timeout" with
+    /// no endedAt, "pending", or pendingError). Re-issuing `agent.wait` with the same runId resumes
+    /// waiting on the same run.
+    case stillRunning
+    /// Run reached a terminal error/abort (gateway status "error", or "timeout" carrying endedAt/
+    /// stopReason for an aborted or timed-out run). The associated message is the user-facing reason.
+    case failed(String)
+    /// The `agent.wait` RPC itself failed (socket timeout / disconnect). Not a run failure.
+    case waitError
+}
+
 public protocol OpenClawChatTransport: Sendable {
     func createSession(
         key: String,
@@ -30,7 +49,7 @@ public protocol OpenClawChatTransport: Sendable {
     func setSessionThinking(sessionKey: String, thinkingLevel: String) async throws
 
     func requestHealth(timeoutMs: Int) async throws -> Bool
-    func waitForRunCompletion(runId: String, timeoutMs: Int) async -> Bool
+    func waitForRunOutcome(runId: String, timeoutMs: Int) async -> OpenClawAgentWaitOutcome
     func events() -> AsyncStream<OpenClawChatTransportEvent>
 
     func setActiveSessionKey(_ sessionKey: String) async throws
@@ -52,8 +71,10 @@ extension OpenClawChatTransport {
 
     public func setActiveSessionKey(_: String) async throws {}
 
-    public func waitForRunCompletion(runId _: String, timeoutMs _: Int) async -> Bool {
-        false
+    public func waitForRunOutcome(runId _: String, timeoutMs _: Int) async -> OpenClawAgentWaitOutcome {
+        // Transports without an agent.wait surface cannot report progress; treat as a transient
+        // wait failure so the re-attach loop falls back to history polling rather than failing the run.
+        .waitError
     }
 
     public func resetSession(sessionKey _: String) async throws {
