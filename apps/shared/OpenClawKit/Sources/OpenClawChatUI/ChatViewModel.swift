@@ -74,6 +74,13 @@ public final class OpenClawChatViewModel {
     // wait blocks ~120s server-side so this is normally a no-op, but it guarantees the loop cannot
     // tight-spin if agent.wait ever returns .stillRunning quickly (e.g. a fast non-terminal frame).
     private static let runWaitMinIntervalMs: UInt64 = 1000
+    // After agent.wait reports a successful terminal completion, the assistant reply is normally
+    // already in history — but completion can race ahead of transcript persistence. For a LONG run the
+    // post-send fallback poll is already exhausted, so this loop is the only reconciler; retry the
+    // history refresh a bounded number of times so the reply lands instead of leaving the run stuck
+    // pending with no waiter.
+    private static let completedRefreshRetries = 6
+    private static let completedRefreshRetryDelayMs: UInt64 = 1500
     private static let postSendRefreshDelaysMs: [UInt64] = [
         1500,
         4000,
@@ -1832,14 +1839,24 @@ public final class OpenClawChatViewModel {
 
                 switch outcome {
                 case .completed:
-                    // The run reached a successful terminal snapshot; refreshIfPending clears the
-                    // run only once the assistant reply is actually in history.
-                    _ = await self.refreshIfPending(
-                        runId: runId,
-                        sessionSnapshot: sessionSnapshot,
-                        after: userMessageTimestamp,
-                        diagnostic: "chat.ui run completion refresh sessionKey=\(sessionSnapshot.key) "
-                            + "runId=\(runId)")
+                    // The run reached a successful terminal snapshot. refreshIfPending returns true while
+                    // the assistant reply is not yet readable in history — completion can race transcript
+                    // persistence, and for a long run the post-send fallback poll is already exhausted, so
+                    // this is the only reconciler. Retry a bounded number of times so the reply lands
+                    // instead of leaving the run stuck pending with no waiter; stop as soon as it's handled.
+                    for attempt in 0 ..< Self.completedRefreshRetries {
+                        let stillPending = await self.refreshIfPending(
+                            runId: runId,
+                            sessionSnapshot: sessionSnapshot,
+                            after: userMessageTimestamp,
+                            diagnostic: "chat.ui run completion refresh sessionKey=\(sessionSnapshot.key) "
+                                + "runId=\(runId) attempt=\(attempt)")
+                        if !stillPending { return }
+                        if Task.isCancelled { return }
+                        guard self.isRunWaitActive(runId: runId, sessionSnapshot: sessionSnapshot) else { return }
+                        try? await Task.sleep(nanoseconds: Self.completedRefreshRetryDelayMs * 1_000_000)
+                        if Task.isCancelled { return }
+                    }
                     return
                 case let .failed(message):
                     // Genuine terminal error/abort — this is the only path that fails the turn from
