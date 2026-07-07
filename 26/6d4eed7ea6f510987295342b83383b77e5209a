@@ -1,0 +1,27 @@
+src/gateway/server-channels.test.ts
+  s_1da2f25a5aa2a6::t_47ee237528ed02 290
+  s_1da2f25a5aa2a6::t_853d70ae3d8124 272-273,275-289,291-299,302-303
+  s_1da2f25a5aa2a6::t_5954b0d99c7b81 17
+  s_1da2f25a5aa2a6::t_22e5de9baab5fd 274
+  s_1da2f25a5aa2a6::t_3666841412aa1d 18-21,300-301
+src/gateway/server-channels.ts
+  s_1da2f25a5aa2a6::t_164c72fcc0b4de 703-707
+  s_1da2f25a5aa2a6::t_9c485ec545a9b8 38-45
+  s_1da2f25a5aa2a6::t_e957def48c85db 592,599
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "266d4eed7ea6f510987295342b83383b77e5209a",
+  "prompts": {},
+  "sessions": {
+    "s_1da2f25a5aa2a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7095177e-629e-4f4f-8554-197924c5ec22",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ubuntu <azureuser@clinton-dev-vm.tail405bf7.ts.net>"
+    }
+  }
+}
