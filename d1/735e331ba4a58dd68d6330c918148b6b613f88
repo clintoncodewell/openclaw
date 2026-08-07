@@ -1,0 +1,19 @@
+apps/ios/Sources/Model/NodeAppModel.swift
+  s_017c4d3a44d883::t_76d617e4dca7f3 2718
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "d1735e331ba4a58dd68d6330c918148b6b613f88",
+  "prompts": {},
+  "sessions": {
+    "s_017c4d3a44d883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c998ec57-0a97-40f2-a175-475e272796ea",
+        "model": "claude-opus-5"
+      },
+      "human_author": "clintoncodewell <clinton@advisewell.co>"
+    }
+  }
+}
