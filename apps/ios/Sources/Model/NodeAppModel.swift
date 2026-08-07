@@ -2715,7 +2715,7 @@ final class NodeAppModel {
                 error: OpenClawNodeError(code: .invalidRequest, message: "INVALID_REQUEST: empty chat.push text"))
         }
 
-        let shouldSpeak = params.speak ?? true
+        let shouldSpeak = params.speak == true
         let status = await notificationAuthorizationStatus()
         let notificationsAllowed = Self.isNotificationServingEnabled(status)
         if !notificationsAllowed, !shouldSpeak {
