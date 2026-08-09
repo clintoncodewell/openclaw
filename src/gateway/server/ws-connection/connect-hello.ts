@@ -11,7 +11,7 @@ import {
 import {
   finalizeNodePairingCleanupClaim,
   recordPairedNodeConnection,
-} from "../../../infra/node-pairing.js";
+} from "../../../infra/device-pairing-node.js";
 import { listProfiles } from "../../../state/user-profiles.js";
 import { resolveRuntimeServiceVersion } from "../../../version.js";
 import { resolveChatAttachmentPolicy } from "../../chat-attachment-policy.js";
@@ -89,6 +89,7 @@ export async function sendGatewayHello(
   const controlUiWidgetKinds = listControlUiPluginWidgetKinds(helloOkAuthScopes);
   const helloOk = {
     type: "hello-ok",
+    // Admission already verified range overlap; this field reports the server's current protocol.
     protocol: PROTOCOL_VERSION,
     server: {
       version: resolveRuntimeServiceVersion(process.env),
@@ -101,6 +102,7 @@ export async function sendGatewayHello(
         GATEWAY_SERVER_CAPS.BOARD_WIDGET_PUT_CANVAS_DOC,
         GATEWAY_SERVER_CAPS.CHAT_SEND_ROUTING_CONTRACT,
         GATEWAY_SERVER_CAPS.SYSTEM_AGENT_SETUP_MODEL_REF,
+        GATEWAY_SERVER_CAPS.TASK_SUGGESTIONS_ACCEPT_MODES,
       ],
     },
     snapshot,
