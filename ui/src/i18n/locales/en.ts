@@ -693,7 +693,6 @@ export const en: TranslationMap = {
   newSession: {
     title: "New session",
     hint: "Pick where this session works, then say what to do.",
-    draftRow: "New session",
     agent: "Agent",
     where: "Where",
     gateway: "Gateway · local",
@@ -4767,9 +4766,22 @@ export const en: TranslationMap = {
     compaction: {
       label: "Compacted history",
       savedTokens: "saved {count} tokens",
-      description:
-        "The compacted transcript is preserved as a checkpoint. Open session checkpoints to branch or restore from that compacted view.",
+      description: "The compacted transcript is preserved as a checkpoint.",
       openCheckpoints: "Open checkpoints",
+    },
+    sessionReset: {
+      label: "Session reset",
+      description: "The earlier conversation was cleared.",
+    },
+    systemNotice: {
+      restartRecovery: {
+        label: "System · restart recovery",
+        summary:
+          "Turn interrupted by a gateway restart — asked the agent to resume and finish the response.",
+      },
+      gatewayRestarted: {
+        label: "System · gateway restarted",
+      },
     },
     progressLabels: {
       shelling: "Shelling",
@@ -4954,7 +4966,6 @@ export const en: TranslationMap = {
       activity: "Activity",
       copySelection: "Copy",
       forkFromHere: "Fork from here",
-      fullContentLoadFailed: "Could not load the full message.",
       reply: "Reply",
       replyToMessage: "Reply to message",
       replyingTo: "Replying to {name}",

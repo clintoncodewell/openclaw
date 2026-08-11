@@ -65,6 +65,15 @@ describe("detectChangedScope Windows routing", () => {
     }
   });
 
+  it("routes port diagnostics and their native proof to Windows", () => {
+    for (const portPath of ["src/infra/ports-inspect.ts", "src/infra/ports.test.ts"]) {
+      expect(detectChangedScope([portPath]), portPath).toMatchObject({
+        runNode: true,
+        runWindows: true,
+      });
+    }
+  });
+
   it("routes MXC runtime changes and Windows-only suites to Windows", () => {
     for (const mxcPath of [
       "extensions/mxc/src/mxc-backend.ts",
@@ -117,6 +126,11 @@ describe("detectChangedScope Windows routing", () => {
 
   it("routes web and Teams file URL handling to Windows", () => {
     for (const fileUrlPath of [
+      "src/agents/tools/media-tool-file-url.windows.test.ts",
+      "src/agents/tools/media-tool-shared.test.ts",
+      "src/agents/tools/media-tool-shared.ts",
+      "src/agents/tools/pdf-tool.test.ts",
+      "src/agents/tools/pdf-tool.ts",
       "src/media/local-media-path.ts",
       "src/media/local-media-path.windows.test.ts",
       "src/media/local-roots.ts",

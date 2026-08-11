@@ -21,6 +21,7 @@ const legacyReaderNames = new Set([
   "readSessionStoreReadOnly",
   "readSessionStoreSnapshot",
   "resolveSessionStoreEntry",
+  "resolveSessionStoreEntryCore",
 ]);
 const legacyWholeStoreAccessNames = new Set([
   ...legacyReaderNames,
@@ -67,7 +68,10 @@ const sessionStoreRuntimeFileBackedCompatNames = new Set([
   "updateSessionStore",
 ]);
 const embeddedAgentSessionFileRuntimeNames = new Set(["resolveSessionFilePath"]);
-const materializingSessionEntryAccessorNames = new Set(["listSessionEntries", "loadSessionEntry"]);
+const materializingSessionEntryAccessorNames = new Set([
+  "listSessionEntriesCore",
+  "loadSessionEntry",
+]);
 
 // Shipped beta.5 official plugins import these deprecated helpers during
 // doctor migrations. Remove this ratchet with the compatibility bridge once

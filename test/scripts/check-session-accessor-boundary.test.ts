@@ -32,14 +32,14 @@ describe("session accessor boundary guard", () => {
     ).toBe(true);
     expect(
       findReadOnlySessionAccessorViolations(`
-        import { listSessionEntries, loadSessionEntry } from "../config/sessions/session-accessor.js";
-        listSessionEntries({ storePath });
+        import { listSessionEntriesCore, loadSessionEntry } from "../config/sessions/session-accessor.js";
+        listSessionEntriesCore({ storePath });
         sessionUtils.loadSessionEntry(sessionKey);
       `),
     ).toEqual([
-      { line: 2, reason: 'imports materializing session entry accessor "listSessionEntries"' },
+      { line: 2, reason: 'imports materializing session entry accessor "listSessionEntriesCore"' },
       { line: 2, reason: 'imports materializing session entry accessor "loadSessionEntry"' },
-      { line: 3, reason: 'calls materializing session entry accessor "listSessionEntries"' },
+      { line: 3, reason: 'calls materializing session entry accessor "listSessionEntriesCore"' },
       { line: 4, reason: 'references materializing session entry accessor "loadSessionEntry"' },
     ]);
     expect(
@@ -358,6 +358,7 @@ describe("session accessor boundary guard", () => {
         sessions["loadSessionStore"](storePath);
         readSessionStoreReadOnly(storePath);
         resolveSessionStoreEntry({ store, sessionKey });
+        resolveSessionStoreEntryCore({ store, sessionKey });
       `),
     ).toEqual([
       { line: 2, reason: 'calls legacy session store access "loadSessionStore"' },
@@ -365,6 +366,7 @@ describe("session accessor boundary guard", () => {
       { line: 4, reason: 'references legacy session store access "loadSessionStore"' },
       { line: 5, reason: 'calls legacy session store access "readSessionStoreReadOnly"' },
       { line: 6, reason: 'calls legacy session store access "resolveSessionStoreEntry"' },
+      { line: 7, reason: 'calls legacy session store access "resolveSessionStoreEntryCore"' },
     ]);
   });
 
@@ -400,8 +402,8 @@ describe("session accessor boundary guard", () => {
   it("allows migrated accessor reads", () => {
     expect(
       findSessionAccessorBoundaryViolations(`
-        import { listSessionEntries } from "../config/sessions/session-accessor.js";
-        listSessionEntries({ storePath });
+        import { listSessionEntriesCore } from "../config/sessions/session-accessor.js";
+        listSessionEntriesCore({ storePath });
       `),
     ).toEqual([]);
   });
@@ -453,7 +455,7 @@ describe("session accessor boundary guard", () => {
     expect(
       findMemoryHostSessionCorpusBoundaryViolations(`
         function listSessionTranscriptCorpusEntriesForAgentSync(agentId) {
-          return listSessionEntries({ agentId });
+          return listSessionEntriesCore({ agentId });
         }
         export async function listSessionFilesForAgent(agentId) {
           return (await listSessionTranscriptCorpusEntriesForAgent(agentId)).map((entry) => entry.sessionFile);

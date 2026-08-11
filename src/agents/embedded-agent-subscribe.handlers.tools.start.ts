@@ -5,8 +5,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { parseSessionThreadInfoFast } from "../config/sessions/thread-info.js";
-import type { AgentItemEventData } from "../infra/agent-activity-events.js";
-import { emitAgentItemEvent } from "../infra/agent-activity-events.js";
+import { emitAgentActivityEvent, type AgentItemEventData } from "../infra/agent-activity-events.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { REQUIRED_PARAM_GROUPS, type RequiredParamGroup } from "./agent-tools.params.js";
 import { sanitizeForConsole } from "./console-sanitize.js";
@@ -34,7 +33,7 @@ import type { AgentEvent } from "./runtime/index.js";
 import { inferToolMetaFromArgsCore, isCommandBearingToolCall } from "./tool-display.js";
 import { resolveFileMutationToolName } from "./tool-mutation-names.js";
 import { buildToolMutationState } from "./tool-mutation.js";
-import { normalizeToolName } from "./tool-policy.js";
+import { normalizeToolPolicyName } from "./tool-policy.js";
 import {
   cancelAskUserPromptDelivery,
   normalizeAskUserParams,
@@ -255,9 +254,10 @@ export function emitTrackedItemEvent(ctx: ToolHandlerContext, itemData: AgentIte
     ctx.state.itemActiveIds.delete(itemData.itemId);
     ctx.state.itemCompletedCount += 1;
   }
-  emitAgentItemEvent({
+  emitAgentActivityEvent({
     runId: ctx.params.runId,
     ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
+    stream: "item",
     data: itemData,
   });
   emitAgentEventCallbackBestEffort(ctx, {
@@ -322,7 +322,7 @@ export function handleToolExecutionStart(
     hideFromChannelProgress?: boolean;
   },
 ): void | Promise<void> {
-  const startToolName = normalizeToolName(evt.toolName);
+  const startToolName = normalizeToolPolicyName(evt.toolName);
   ctx.state.liveEditDiffStateById.delete(evt.toolCallId);
   const askUserPromptReservation =
     startToolName === "ask_user" && ctx.params.onToolResult
@@ -358,7 +358,7 @@ export function handleToolExecutionStart(
 
   const continueToolExecutionStart = (): void | Promise<void> => {
     const rawToolName = evt.toolName;
-    const toolName = normalizeToolName(rawToolName);
+    const toolName = normalizeToolPolicyName(rawToolName);
     const hideFromChannelProgress = evt.hideFromChannelProgress === true;
     const toolCallId = evt.toolCallId;
     const args = evt.args;
