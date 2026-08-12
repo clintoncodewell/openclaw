@@ -2,7 +2,9 @@
 // helpers, and numeric argument validation.
 import { Value } from "typebox/value";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { buildGatewaySessionRow } from "../../gateway/session-utils-row.js";
 import { compactToolOutputHint } from "../tool-schema-hints.js";
 import { createSessionsListTool } from "./sessions-list-tool.js";
 
@@ -81,12 +83,94 @@ describe("sessions-list-tool", () => {
     mocks.getSessionStateVersions.mockReturnValue({});
   });
 
+  it("filters Gateway-projected agent sessions by their authoritative classification", async () => {
+    const entries = [
+      ["agent:main:main", { sessionId: "session-main", updatedAt: 5 }],
+      [
+        "agent:main:slack:channel:C123",
+        { sessionId: "session-group", updatedAt: 4, chatType: "channel" },
+      ],
+      ["agent:main:cron:nightly", { sessionId: "session-cron", updatedAt: 3 }],
+      ["agent:main:hook:deploy", { sessionId: "session-hook", updatedAt: 2 }],
+      ["agent:main:node-device", { sessionId: "session-node", updatedAt: 1 }],
+    ] satisfies Array<[string, SessionEntry]>;
+    const store = Object.fromEntries(entries);
+    const sessions = entries.map(([key, entry]) =>
+      buildGatewaySessionRow({
+        cfg: VALID_CONFIG,
+        storePath: "/tmp/sessions.json",
+        store,
+        key,
+        entry,
+        skipTranscriptUsageFallback: true,
+        lightweightListRow: true,
+      }),
+    );
+    mocks.gatewayCall.mockResolvedValue({ path: "/tmp/sessions.json", sessions });
+    const tool = createSessionsListTool({ config: VALID_CONFIG });
+
+    const unfiltered = getSessionsListDetails(await tool.execute("all-kinds", {})).sessions ?? [];
+    const filteredKeys: Record<string, string[]> = {};
+    for (const kind of ["main", "group", "cron", "hook", "node"]) {
+      const result = getSessionsListDetails(
+        await tool.execute(`filter-${kind}`, { kinds: [kind] }),
+      );
+      filteredKeys[kind] = (result.sessions ?? []).map((row) => String(row.key));
+    }
+
+    expect({
+      projected: sessions.map(({ key, kind, classification }) => ({
+        key,
+        wireKind: kind,
+        classification,
+      })),
+      modelVisible: unfiltered.map(({ key, kind }) => ({ key, kind })),
+      filteredKeys,
+    }).toEqual({
+      projected: [
+        { key: "agent:main:main", wireKind: "direct", classification: "main" },
+        {
+          key: "agent:main:slack:channel:C123",
+          wireKind: "group",
+          classification: "channel",
+        },
+        { key: "agent:main:cron:nightly", wireKind: "direct", classification: "cron" },
+        { key: "agent:main:hook:deploy", wireKind: "direct", classification: "hook" },
+        { key: "agent:main:node-device", wireKind: "direct", classification: "node" },
+      ],
+      modelVisible: [
+        { key: "agent:main:main", kind: "main" },
+        { key: "agent:main:slack:channel:C123", kind: "group" },
+        { key: "agent:main:cron:nightly", kind: "cron" },
+        { key: "agent:main:hook:deploy", kind: "hook" },
+        { key: "agent:main:node-device", kind: "node" },
+      ],
+      filteredKeys: {
+        main: ["agent:main:main"],
+        group: ["agent:main:slack:channel:C123"],
+        cron: ["agent:main:cron:nightly"],
+        hook: ["agent:main:hook:deploy"],
+        node: ["agent:main:node-device"],
+      },
+    });
+  });
+
   it("adds nonzero state versions with one batch lookup", async () => {
     mocks.gatewayCall.mockResolvedValue({
       path: "/tmp/sessions.json",
       sessions: [
-        { key: "agent:main:main", kind: "main", sessionId: "main-1" },
-        { key: "agent:main:subagent:child", kind: "other", sessionId: "child-1" },
+        {
+          key: "agent:main:main",
+          kind: "direct",
+          classification: "main",
+          sessionId: "main-1",
+        },
+        {
+          key: "agent:main:subagent:child",
+          kind: "direct",
+          classification: "subagent",
+          sessionId: "child-1",
+        },
       ],
     });
     mocks.getSessionStateVersions.mockReturnValue({
@@ -107,8 +191,13 @@ describe("sessions-list-tool", () => {
     mocks.gatewayCall.mockResolvedValue({
       path: "(multiple)",
       sessions: [
-        { key: "agent:main:dashboard:visible", kind: "other" },
-        { key: "agent:main:dashboard:incognito-private", kind: "other", incognito: true },
+        { key: "agent:main:dashboard:visible", kind: "direct", classification: "dashboard" },
+        {
+          key: "agent:main:dashboard:incognito-private",
+          kind: "direct",
+          classification: "dashboard",
+          incognito: true,
+        },
       ],
     });
 
@@ -125,8 +214,10 @@ describe("sessions-list-tool", () => {
       sessions: [
         {
           key: "agent:main:subagent:child",
+          sessionId: "session-child",
           agentId: "main",
-          kind: "other",
+          kind: "direct",
+          classification: "subagent",
           channel: "discord",
           label: "worker",
           displayName: "Worker",
@@ -154,13 +245,14 @@ describe("sessions-list-tool", () => {
     expect(tool.outputSchema).toBeDefined();
     expect(Value.Check(tool.outputSchema!, result.details)).toBe(true);
     expect(compactToolOutputHint(tool.outputSchema)).toBe(
-      '{ count: number; sessions: Array<{ agentId: string; archived: boolean; channel: string; key: string; kind: "main" | "group" | "cron" | "hook" | "node" | "other"; pinned: boolean; abortedLastRun?: boolean; childSessions?: Array<string>; contextTokens?: number; derivedTitle?: string; displayName?: string; label?: string; lastMessagePreview?: string; messages?: Array<unknown>; model?: string; parentSessionKey?: string; stateVersion?: number; status?: "running" | "done" | "failed" | "killed" | "timeout"; totalTokens?: number; updatedAt?: number }>; visibility?: { mode: "self" | "tree" | "agent"; restricted: true; warning: string } }',
+      '{ count: number; sessions: Array<{ agentId: string; archived: boolean; channel: string; key: string; kind: "main" | "group" | "cron" | "hook" | "node" | "other"; pinned: boolean; abortedLastRun?: boolean; childSessions?: Array<string>; contextTokens?: number; derivedTitle?: string; displayName?: string; label?: string; lastMessagePreview?: string; messages?: Array<unknown>; model?: string; parentSessionKey?: string; sessionId?: string; stateVersion?: number; status?: "running" | "done" | "failed" | "killed" | "timeout"; totalTokens?: number; updatedAt?: number }>; visibility?: { mode: "self" | "tree" | "agent"; restricted: true; warning: string } }',
     );
     expect(result.details).toEqual({
       count: 1,
       sessions: [
         {
           key: "agent:main:subagent:child",
+          sessionId: "session-child",
           agentId: "main",
           kind: "other",
           channel: "discord",
@@ -194,6 +286,7 @@ describe("sessions-list-tool", () => {
             {
               key: "agent:main:dashboard:child",
               kind: "direct",
+              classification: "dashboard",
               sessionId: "sess-dashboard-child",
               deliveryContext: {
                 channel: "discord",
@@ -205,6 +298,7 @@ describe("sessions-list-tool", () => {
             {
               key: "agent:main:telegram:topic",
               kind: "direct",
+              classification: "custom",
               sessionId: "sess-telegram-topic",
               deliveryContext: {
                 channel: "telegram",
@@ -235,7 +329,8 @@ describe("sessions-list-tool", () => {
       sessions: [
         {
           key: "agent:main:subagent:child",
-          kind: "other",
+          kind: "direct",
+          classification: "subagent",
           parentSessionKey: "agent:main:subagent:parent",
           spawnedBy: "agent:main:main",
         },
@@ -259,26 +354,32 @@ describe("sessions-list-tool", () => {
             {
               key: "agent:main:slack:channel:C123:thread:1710000000.000100",
               kind: "group",
+              classification: "thread",
+              peerKind: "channel",
               sessionId: "sess-slack-thread",
             },
             {
               key: "discord:group:ops",
               kind: "group",
+              classification: "group",
               sessionId: "sess-discord-group",
             },
             {
               key: "agent:main:matrix:channel:!room:[2001:db8::1]",
               kind: "group",
+              classification: "channel",
               sessionId: "sess-matrix-room",
             },
             {
               key: "agent:main:agent:plugin:slack:channel:C123",
               kind: "group",
+              classification: "custom",
               sessionId: "sess-nested-agent",
             },
             {
               key: "agent::slack:channel:C123",
               kind: "group",
+              classification: "channel",
               sessionId: "sess-malformed-agent",
             },
           ],
@@ -307,8 +408,9 @@ describe("sessions-list-tool", () => {
           path: "/tmp/sessions.json",
           sessions: [
             {
-              key: "main",
+              key: "agent:main:main",
               kind: "direct",
+              classification: "main",
               sessionId: "sess-main",
               thinkingLevel: "high",
               fastMode: "auto",
@@ -332,7 +434,8 @@ describe("sessions-list-tool", () => {
 
     const session = details.sessions?.[0];
     expect(session).toEqual({
-      key: "main",
+      key: "agent:main:main",
+      sessionId: "sess-main",
       agentId: "main",
       kind: "main",
       channel: "unknown",
@@ -348,6 +451,7 @@ describe("sessions-list-tool", () => {
         {
           key: "agent:main:dashboard:archived",
           kind: "direct",
+          classification: "dashboard",
           archived: true,
           archivedAt: 20,
           pinned: false,
