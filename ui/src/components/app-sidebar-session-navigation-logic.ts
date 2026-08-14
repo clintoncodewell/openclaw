@@ -1,7 +1,6 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { GatewaySessionRow, SessionsListResult } from "../api/types.ts";
-import { SIDEBAR_NAV_ROUTES } from "../app-navigation.ts";
-import type { NavigationRouteId } from "../app-navigation.ts";
+import { SIDEBAR_NAV_ROUTES, type NavigationRouteId } from "../app-navigation.ts";
 import type { RouteId } from "../app-route-paths.ts";
 import type { ApplicationContext } from "../app/context.ts";
 import { t } from "../i18n/index.ts";
@@ -49,6 +48,7 @@ import {
 } from "./app-sidebar-session-types.ts";
 import type { SidebarWorkboardBoard } from "./app-sidebar-workboard.ts";
 import { resolveCloudWorkerStopAction } from "./cloud-worker-stop.ts";
+import type { SessionAttentionController } from "./session-attention-controller.ts";
 import {
   listSessionCreators,
   type SessionCreatedActor,
@@ -56,6 +56,20 @@ import {
 } from "./session-owner-chip.ts";
 
 type SessionRow = SessionsListResult["sessions"][number];
+
+export function resolveSidebarHomeAttention(
+  attention: SessionAttentionController,
+  sessionKey: string,
+  row: GatewaySessionRow | null,
+) {
+  const known = attention
+    .knownSessionAttention()
+    .find((entry) => areUiSessionKeysEquivalent(entry.sessionKey, sessionKey));
+  return (
+    known?.attention ??
+    (row ? attention.resolveSessionAttention(row) : SIDEBAR_SESSION_NO_ATTENTION)
+  );
+}
 
 export function compareSidebarSessionRowsByMode(input: {
   a: SessionRow;
@@ -180,6 +194,7 @@ export function buildSidebarSessionNavigationState(input: {
       visuallyActive: input.highlightCurrentSession && row.key === navigation.currentSessionKey,
       // Normalize optional gateway state before collapsing it to the sidebar's required fact.
       hasActiveRun: row.archived !== true && isSessionRunActive(row),
+      gatewayHasActiveRun: row.hasActiveRun,
       activeRunIds: row.archived === true ? undefined : row.activeRunIds,
       modelSelectionLocked: row.modelSelectionLocked === true,
       kind: row.kind,

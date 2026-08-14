@@ -6728,7 +6728,7 @@
       "surface": "android",
       "sites": [
         {
-          "kind": "ui-call",
+          "kind": "conditional-branch",
           "path": "apps/android/app/src/main/java/ai/openclaw/app/ui/SessionsScreen.kt"
         }
       ]
@@ -6741,6 +6741,17 @@
         {
           "kind": "ui-call",
           "path": "apps/android/app/src/main/java/ai/openclaw/app/ui/chat/ChatMessageActions.kt"
+        }
+      ]
+    },
+    {
+      "id": "native.android.e5ad8016516600bb",
+      "source": "Fork from last completed message",
+      "surface": "android",
+      "sites": [
+        {
+          "kind": "conditional-branch",
+          "path": "apps/android/app/src/main/java/ai/openclaw/app/ui/SessionsScreen.kt"
         }
       ]
     },
@@ -23153,6 +23164,17 @@
       ]
     },
     {
+      "id": "native.apple.02f52db82466e98a",
+      "source": "CUA (driver not bundled)",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "conditional-branch",
+          "path": "apps/macos/Sources/OpenClaw/GeneralSettings.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.cfbd34b9f70ab403",
       "source": "Cache",
       "surface": "apple",
@@ -24119,6 +24141,17 @@
       ]
     },
     {
+      "id": "native.apple.f0969ec829f56eed",
+      "source": "Choose the node-local automation backend for snapshots and actions.",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-named-argument",
+          "path": "apps/macos/Sources/OpenClaw/GeneralSettings.swift"
+        }
+      ]
+    },
+    {
       "id": "native.apple.e4b13f49bb435884",
       "source": "Choose where the Gateway runs and how this Mac app reaches it.",
       "surface": "apple",
@@ -24618,6 +24651,21 @@
       "source": "Computer Control access",
       "surface": "apple",
       "sites": [
+        {
+          "kind": "ui-named-argument",
+          "path": "apps/macos/Sources/OpenClaw/GeneralSettings.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.7b46ae17b22676bf",
+      "source": "Computer Control provider",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-call",
+          "path": "apps/macos/Sources/OpenClaw/GeneralSettings.swift"
+        },
         {
           "kind": "ui-named-argument",
           "path": "apps/macos/Sources/OpenClaw/GeneralSettings.swift"
@@ -29713,7 +29761,7 @@
       "surface": "apple",
       "sites": [
         {
-          "kind": "ui-call",
+          "kind": "ui-localized-call",
           "path": "apps/ios/Sources/Design/CommandCenterSupport.swift"
         },
         {
@@ -29738,6 +29786,29 @@
         {
           "kind": "ui-call",
           "path": "apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatView.swift"
+        }
+      ]
+    },
+    {
+      "id": "native.apple.d6c01cfe9e53e179",
+      "source": "Fork from last completed message",
+      "surface": "apple",
+      "sites": [
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/ios/Sources/Design/CommandCenterSupport.swift"
+        },
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatSessionSidebar.swift"
+        },
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatSheets.swift"
+        },
+        {
+          "kind": "ui-localized-call",
+          "path": "apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatWindowShell.swift"
         }
       ]
     },
