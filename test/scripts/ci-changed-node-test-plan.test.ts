@@ -299,6 +299,24 @@ describe("CI changed Node test plan", () => {
     expect(shards?.flatMap((shard) => shard.configs)).toContain(config);
   });
 
+  it("packs Telegram process lifetimes into bounded changed-extension jobs", () => {
+    const shards = createChangedExtensionFallbackShards(["extensions/telegram/src/channel.ts"]);
+    const targets = shards.flatMap((shard) => shard.includePatterns ?? []);
+
+    expect(shards.length).toBeGreaterThan(1);
+    expect(
+      shards.every(
+        (shard) =>
+          shard.configs[0] === "test/vitest/vitest.extension-telegram.config.ts" &&
+          (shard.includePatterns?.length ?? 0) > 0 &&
+          (shard.includePatterns?.length ?? 0) <= 10,
+      ),
+    ).toBe(true);
+    expect(targets.length).toBeGreaterThan(10);
+    expect(new Set(targets).size).toBe(targets.length);
+    expect(shards).toHaveLength(Math.ceil(targets.length / 10));
+  });
+
   it("preserves Matrix process bounds in mixed package fallbacks", () => {
     const shards = createChangedExtensionFallbackShards([
       "packages/gateway-protocol/src/frame-guards.ts",
