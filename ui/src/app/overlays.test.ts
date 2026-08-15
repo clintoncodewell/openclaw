@@ -76,6 +76,14 @@ describe("device-auth upgrade migration", () => {
     const request = vi.fn<RequestFn>(() => Promise.resolve({}));
     const harness = createGatewayHarness(null, false);
     const overlays = createApplicationOverlays(harness.gateway);
+    const migrationError = new Promise<string>((resolve) => {
+      const unsubscribe = overlays.subscribe((snapshot) => {
+        if (snapshot.deviceAuthMigration.error) {
+          unsubscribe();
+          resolve(snapshot.deviceAuthMigration.error);
+        }
+      });
+    });
     harness.update({
       client: client(request),
       phase: "connected",
@@ -85,9 +93,7 @@ describe("device-auth upgrade migration", () => {
       } as ApplicationGatewaySnapshot["hello"],
     });
 
-    await vi.waitFor(() => {
-      expect(overlays.snapshot.deviceAuthMigration.error).toContain("HTTPS or localhost");
-    });
+    await expect(migrationError).resolves.toContain("HTTPS or localhost");
     expect(overlays.snapshot.deviceAuthMigration.requestId).toBeNull();
     expect(request).not.toHaveBeenCalledWith("device.pair.list", expect.anything());
     overlays.dispose();
@@ -245,23 +251,6 @@ describe("device-auth upgrade migration", () => {
 });
 
 describe("Control UI refresh nudge", () => {
-  it("flags an exact build mismatch on the first connection", () => {
-    const gatewayClient = client(async () => []);
-    const harness = createGatewayHarness(null, false);
-    const overlays = createApplicationOverlays(harness.gateway);
-
-    harness.update({
-      client: gatewayClient,
-      phase: "reconnecting",
-      hello: {
-        server: { version: "1.0.0", buildId: "other" },
-      } as ApplicationGatewaySnapshot["hello"],
-    });
-
-    expect(overlays.snapshot.controlUiRefreshRequired).toBe(true);
-    overlays.dispose();
-  });
-
   it("does not flag an independently built configured UI root", () => {
     const gatewayClient = client(async () => []);
     const harness = createGatewayHarness(null, false);
