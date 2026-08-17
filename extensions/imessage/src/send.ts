@@ -1,6 +1,8 @@
 // Imessage plugin module implements send behavior.
 import { constants, accessSync } from "node:fs";
 import { basename } from "node:path";
+import type { ChannelApprovalKind } from "openclaw/plugin-sdk/approval-handler-runtime";
+import { addApprovalReactionHintToText } from "openclaw/plugin-sdk/approval-reaction-runtime";
 import type { ExecApprovalReplyDecision } from "openclaw/plugin-sdk/approval-reply-runtime";
 import {
   createChannelPartialDeliveryError,
@@ -39,7 +41,6 @@ import {
   type ResolvedIMessageAccount,
 } from "./accounts.js";
 import {
-  addIMessageApprovalReactionHintToText,
   type IMessageApprovalConversationKey,
   registerIMessageApprovalReactionTarget,
 } from "./approval-reactions.js";
@@ -78,7 +79,7 @@ type IMessageSendTransport = "auto" | "bridge" | "applescript";
 
 type IMessageApprovalPromptBinding = {
   approvalId: string;
-  approvalKind: "exec" | "plugin";
+  approvalKind: ChannelApprovalKind;
   allowedDecisions: readonly ExecApprovalReplyDecision[];
 };
 
@@ -882,7 +883,7 @@ export async function sendMessageIMessage(
         ? account.config.mediaMaxMb * 1024 * 1024
         : 16 * 1024 * 1024;
   let message = opts.approvalPrompt
-    ? addIMessageApprovalReactionHintToText({
+    ? addApprovalReactionHintToText({
         text,
         allowedDecisions: opts.approvalPrompt.allowedDecisions,
       })

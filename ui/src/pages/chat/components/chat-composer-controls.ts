@@ -22,6 +22,7 @@ export type ChatRunControlsProps = {
   hasAttachments?: boolean;
   isBusy: boolean;
   followUpMode?: ControlUiFollowUpMode;
+  steerNowEnabled: boolean;
   suggestionComposer?: boolean;
   sending: boolean;
   voiceActive?: boolean;
@@ -36,7 +37,6 @@ export type ChatRunControlsProps = {
   onPrimaryActionPointerDown?: (event: PointerEvent) => void;
   onAbort?: () => void;
   onSend: () => void;
-  onStoreDraft: (draft: string) => void;
   onToggleVoice?: () => void;
   onToggleCamera?: () => void;
   microphonePicker?: TemplateResult | typeof nothing;
@@ -218,12 +218,12 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
         : interruptsActiveRun
           ? t("chat.runControls.sendMessage")
           : t("chat.runControls.queueMessage");
-  const storeDraftAndSend = () => {
-    if (props.draft.trim()) {
-      props.onStoreDraft(props.draft);
-    }
-    props.onSend();
-  };
+  const queueSteerShortcutAvailable = props.steerNowEnabled && props.canSend && hasComposedContent;
+  const activeRunActionTooltip = queueSteerShortcutAvailable
+    ? `${activeRunActionLabel} ⏎ · ${t("chat.queue.steer")} ${t("chat.sendShortcutModifierEnter")}`
+    : activeRunActionLabel;
+  // Lit passes the click event to handlers; keep it out of the scalar send override.
+  const send = () => props.onSend();
   const abortAction = props.canAbort
     ? html`
         <openclaw-tooltip .content=${t("chat.runControls.stop")}>
@@ -247,11 +247,11 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
   const voiceErrored = props.voiceStatus === "error";
   const voiceButton = renderComposerVoiceButton(props);
   const sendAction = html`
-    <openclaw-tooltip .content=${activeRunActionLabel}>
+    <openclaw-tooltip .content=${activeRunActionTooltip}>
       <button
         class="chat-send-btn"
         @pointerdown=${props.onPrimaryActionPointerDown}
-        @click=${storeDraftAndSend}
+        @click=${send}
         ?disabled=${!props.canSend || props.sending}
         aria-label=${activeRunActionDescription}
       >
@@ -268,7 +268,7 @@ export function renderChatPrimaryActions(props: ChatRunControlsProps) {
       <button
         class="chat-send-btn"
         @pointerdown=${props.onPrimaryActionPointerDown}
-        @click=${storeDraftAndSend}
+        @click=${send}
         disabled
         aria-label=${emptySendDescription}
       >

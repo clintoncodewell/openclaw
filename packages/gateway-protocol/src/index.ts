@@ -12,10 +12,15 @@ export * from "./schema/worker-inference.js";
 export * from "./schema/skill-history.js";
 export * from "./schema/ui-command.js";
 export * from "./schema/board.js";
+export * from "./schema/progress-card.js";
 export {
   SessionCreatedActorSchema,
+  SessionPermissionModeSchema,
+  SessionOwnerSchema,
   SessionToolOverridesSchema,
   type SessionCreatedActor,
+  type SessionOwner,
+  type SessionPermissionMode,
   type SessionRow,
   type SessionRunStatus,
   type SessionToolOverrides,
@@ -287,6 +292,16 @@ export {
   SessionsReclaimParamsSchema,
   SessionsReclaimResultPlacementSchema,
   SessionsReclaimResultSchema,
+  SessionMoveExpectedSourceSchema,
+  SessionMoveGatewayTargetSchema,
+  SessionMoveProfileTargetSchema,
+  SessionMoveDeviceTargetSchema,
+  SessionMoveTargetSchema,
+  SessionPlacementMoveSchema,
+  SessionsMoveParamsSchema,
+  SessionMovePlacementStateSchema,
+  SessionMovePlacementSchema,
+  SessionsMoveResultSchema,
   SessionsSendParamsSchema,
   SessionsAbortParamsSchema,
   SESSIONS_PATCH_MANY_MAX_TARGETS,
@@ -298,6 +313,10 @@ export {
   SessionsPluginPatchParamsSchema,
   SessionsResetParamsSchema,
   SessionsDeleteParamsSchema,
+  SessionsAssignOwnerParamsSchema,
+  SessionsAssignOwnerResultSchema,
+  type SessionsAssignOwnerParams,
+  type SessionsAssignOwnerResult,
   SessionGroupSchema,
   SessionGroupDefaultsSchema,
   SessionsGroupsListParamsSchema,

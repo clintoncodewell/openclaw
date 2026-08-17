@@ -76,7 +76,7 @@ describe("worker tunnel manager", () => {
     expect(workspace?.argv.at(-1)).toContain("pwd");
     expect(fake.starts).toHaveLength(1);
     const plan = parseWorkerLaunchPlan({
-      version: 3,
+      version: 4,
       admission: {
         environmentId: "worker:one",
         credential: "worker-credential-fixture",
@@ -108,7 +108,22 @@ describe("worker tunnel manager", () => {
     });
     const onDispatchReady = vi.fn();
     await expect(
-      handle.launchTurn({ plan, placementGeneration: 1, timeoutMs: 123, onDispatchReady }),
+      handle.launchTurn({
+        plan,
+        turnClaim: {
+          sessionId: plan.admission.sessionId,
+          claimId: "claim-1",
+          runId: plan.assignment.runId,
+          placementGeneration: 1,
+          owner: {
+            kind: "worker",
+            environmentId: plan.admission.environmentId,
+            ownerEpoch: plan.admission.ownerEpoch,
+          },
+        },
+        timeoutMs: 123,
+        onDispatchReady,
+      }),
     ).resolves.toEqual(success());
     expect(onDispatchReady).toHaveBeenCalledOnce();
     const launch = fake.runs.at(-1);

@@ -441,6 +441,37 @@ const CronFailureNotificationDeliverySchema = closedObject({
   error: Type.Optional(Type.String()),
 });
 
+const CronDeliveryTraceTargetProperties = {
+  channel: Type.Optional(Type.String()),
+  to: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  accountId: Type.Optional(Type.String()),
+  threadId: Type.Optional(Type.Union([Type.String(), Type.Number()])),
+  source: Type.Optional(Type.Union([Type.Literal("explicit"), Type.Literal("last")])),
+};
+
+const CronDeliveryTraceSchema = closedObject({
+  intended: Type.Optional(closedObject(CronDeliveryTraceTargetProperties)),
+  resolved: Type.Optional(
+    closedObject({
+      ...CronDeliveryTraceTargetProperties,
+      ok: Type.Boolean(),
+      error: Type.Optional(Type.String()),
+    }),
+  ),
+  messageToolSentTo: Type.Optional(
+    Type.Array(
+      closedObject({
+        channel: Type.String(),
+        to: Type.Optional(Type.String()),
+        accountId: Type.Optional(Type.String()),
+        threadId: Type.Optional(Type.String()),
+      }),
+    ),
+  ),
+  fallbackUsed: Type.Optional(Type.Boolean()),
+  delivered: Type.Optional(Type.Boolean()),
+});
+
 const CronAutoDisabledSchema = closedObject({
   reason: Type.Union([Type.Literal("consecutive-failures"), Type.Literal("schedule-errors")]),
   atMs: CronDateTimestampMsSchema,
@@ -688,9 +719,11 @@ export const CronUpdateParamsSchema = cronIdOrJobIdParams({
 /** Removes a cron job by id or legacy jobId alias. */
 export const CronRemoveParamsSchema = cronIdOrJobIdParams({});
 
-/** Runs a cron job immediately or only if due. */
+/** Runs a cron job immediately, immediately if enabled, or only if due. */
 export const CronRunParamsSchema = cronIdOrJobIdParams({
-  mode: Type.Optional(Type.Union([Type.Literal("due"), Type.Literal("force")])),
+  mode: Type.Optional(
+    Type.Union([Type.Literal("due"), Type.Literal("force"), Type.Literal("if-enabled")]),
+  ),
   /** Rejects the mutation if the Gateway restarted after the caller's preflight. */
   expectedProcessInstanceId: Type.Optional(NonEmptyString),
 });
@@ -728,6 +761,7 @@ export const CronRunLogEntrySchema = closedObject({
   deliveryStatus: Type.Optional(CronDeliveryStatusSchema),
   deliveryError: Type.Optional(Type.String()),
   failureNotificationDelivery: Type.Optional(CronFailureNotificationDeliverySchema),
+  delivery: Type.Optional(CronDeliveryTraceSchema),
   sessionId: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(NonEmptyString),
   runId: Type.Optional(NonEmptyString),

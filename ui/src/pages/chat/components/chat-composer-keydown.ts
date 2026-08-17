@@ -1,6 +1,6 @@
 import type { ChatSendShortcut } from "../../../app/settings.ts";
+import { steerableQueuedMessage } from "../chat-queue.ts";
 import { restoreHistoryCaret, scrollActiveMenuOptionIntoView } from "./chat-composer-dom.ts";
-import { steerableQueuedMessage } from "./chat-composer-queue.ts";
 import {
   getActiveSkillMenuOptionId,
   resetSkillMenuState,
@@ -24,6 +24,7 @@ type ComposerKeyDownDeps = {
   commitDraft: (draft: string) => void;
   syncDraftAfterSend: (target: HTMLTextAreaElement | null) => void;
   showAbortableUi: boolean;
+  steerNowEnabled: boolean;
 };
 
 function handleComposerMenuKeyDown<T>(
@@ -92,6 +93,7 @@ export function createComposerKeyDownHandler({
   commitDraft,
   syncDraftAfterSend,
   showAbortableUi,
+  steerNowEnabled,
 }: ComposerKeyDownDeps): (event: KeyboardEvent) => void {
   return (event) => {
     // The handler only ever binds to the composer textarea; narrowing here
@@ -209,7 +211,8 @@ export function createComposerKeyDownHandler({
     const sendShortcutMatches = sendShortcut === "enter" || event.metaKey || event.ctrlKey;
     if (event.key === "Enter" && !event.shiftKey && sendShortcutMatches) {
       const attachments = props.getAttachments?.() ?? props.attachments ?? [];
-      if (!target.value.trim() && attachments.length === 0) {
+      const hasComposedContent = Boolean(target.value.trim() || attachments.length);
+      if (!hasComposedContent) {
         // Mirror the queue chip's Steer availability exactly (visible surface,
         // connected + composable gate), or offline Enter would swallow the key
         // and invoke a lifecycle that returns with no visible outcome.
@@ -232,7 +235,12 @@ export function createComposerKeyDownHandler({
       }
       event.preventDefault();
       commitDraft(target.value);
-      props.onSend();
+      const steerImmediately = steerNowEnabled && (event.metaKey || event.ctrlKey) && !event.altKey;
+      if (steerImmediately) {
+        props.onSend("steer");
+      } else {
+        props.onSend();
+      }
       syncDraftAfterSend(target);
     }
   };
