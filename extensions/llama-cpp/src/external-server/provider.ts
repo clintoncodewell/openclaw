@@ -1,3 +1,4 @@
+import { pruneMapToMaxSize } from "openclaw/plugin-sdk/collection-runtime";
 import type {
   ProviderCatalogContext,
   ProviderPrepareDynamicModelContext,
@@ -7,12 +8,12 @@ import type {
   UnifiedModelCatalogProviderContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
+import { LLAMA_CPP_PROVIDER_ID } from "../defaults.js";
 import {
   hasLlamaServerAuthorizationHeader,
   resolveLlamaServerProviderHeaders,
   resolveLlamaServerRuntimeApiKey,
 } from "./auth.js";
-import { LLAMA_SERVER_PROVIDER_ID } from "./defaults.js";
 import { discoverLlamaServer, type LlamaServerDiscoveryResult } from "./discovery.js";
 import { resolveLlamaServerEndpoint } from "./endpoint.js";
 import { buildLlamaServerProviderConfig, type LlamaServerDiscoveredModel } from "./models.js";
@@ -23,13 +24,7 @@ const LLAMA_SERVER_DYNAMIC_MODEL_MAX_SCOPES = 100;
 function cacheDynamicModels(key: string, models: ProviderRuntimeModel[]): void {
   dynamicModels.delete(key);
   dynamicModels.set(key, models);
-  while (dynamicModels.size > LLAMA_SERVER_DYNAMIC_MODEL_MAX_SCOPES) {
-    const oldest = dynamicModels.keys().next();
-    if (oldest.done) {
-      break;
-    }
-    dynamicModels.delete(oldest.value);
-  }
+  pruneMapToMaxSize(dynamicModels, LLAMA_SERVER_DYNAMIC_MODEL_MAX_SCOPES);
 }
 
 function dynamicModelScopeKey(
@@ -54,7 +49,7 @@ function toRuntimeModel(
 ): ProviderRuntimeModel {
   return {
     ...model.config,
-    provider: LLAMA_SERVER_PROVIDER_ID,
+    provider: LLAMA_CPP_PROVIDER_ID,
     api: providerConfig.api ?? "openai-completions",
     baseUrl: resolveLlamaServerEndpoint(providerConfig.baseUrl).inferenceBaseUrl,
     input: model.config.input.filter(
@@ -81,7 +76,7 @@ function toUnifiedCatalogEntry(
   const warning = statusWarning(model);
   return {
     kind: "text",
-    provider: LLAMA_SERVER_PROVIDER_ID,
+    provider: LLAMA_CPP_PROVIDER_ID,
     model: model.config.id,
     label: model.config.name,
     source: "live",
@@ -103,8 +98,8 @@ function toUnifiedCatalogEntry(
 async function discoverFromCatalogContext(
   ctx: ProviderCatalogContext | UnifiedModelCatalogProviderContext,
 ): Promise<LlamaServerDiscoveryResult> {
-  const providerConfig = ctx.config.models?.providers?.[LLAMA_SERVER_PROVIDER_ID];
-  const auth = ctx.resolveProviderApiKey(LLAMA_SERVER_PROVIDER_ID);
+  const providerConfig = ctx.config.models?.providers?.[LLAMA_CPP_PROVIDER_ID];
+  const auth = ctx.resolveProviderApiKey(LLAMA_CPP_PROVIDER_ID);
   const headers = await resolveLlamaServerProviderHeaders({
     config: ctx.config,
     env: ctx.env,
@@ -125,7 +120,7 @@ async function discoverFromCatalogContext(
 export async function discoverLlamaServerProvider(
   ctx: ProviderCatalogContext,
 ): Promise<{ provider: ModelProviderConfig } | null> {
-  const configured = ctx.config.models?.providers?.[LLAMA_SERVER_PROVIDER_ID];
+  const configured = ctx.config.models?.providers?.[LLAMA_CPP_PROVIDER_ID];
   const discovery = await discoverFromCatalogContext(ctx);
   if (discovery.kind !== "success") {
     return configured
