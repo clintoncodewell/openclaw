@@ -11,6 +11,7 @@ import {
   shouldDisableCodexToolSearchForModel,
 } from "./dynamic-tool-profile.js";
 import { mergeCodexThreadConfigs } from "./plugin-thread-config.js";
+import { buildCodexProjectDocThreadConfig } from "./project-doc-thread-config.js";
 import {
   CODEX_OPENCLAW_DIRECT_DYNAMIC_TOOL_NAMESPACE,
   isJsonObject,
@@ -29,6 +30,7 @@ import {
   resolveCodexAppServerRequestModelSelection,
 } from "./thread-model-selection.js";
 import { buildDeveloperInstructions } from "./thread-prompt.js";
+import { applyCodexManagedShellEnvironment } from "./thread-shell-environment.js";
 import { resolveCodexWebSearchPlan, type CodexNativeWebSearchSupport } from "./web-search.js";
 
 export const CODEX_RING_ZERO_BASE_INSTRUCTIONS = "";
@@ -164,6 +166,8 @@ export function buildThreadStartParams(
     modelProvider?: string | null;
     hostSystemAgentActive?: boolean;
     restrictedToolSurfaceInheritedMcpServerNames?: readonly string[];
+    shellEnvironment?: Readonly<Record<string, string>>;
+    disableLoginShell?: boolean;
   },
 ): CodexThreadStartParams {
   const ringZeroActive =
@@ -210,6 +214,8 @@ export function buildThreadStartParams(
       hostSystemAgentActive: options.hostSystemAgentActive,
       restrictedToolSurfaceInheritedMcpServerNames:
         options.restrictedToolSurfaceInheritedMcpServerNames,
+      shellEnvironment: options.shellEnvironment,
+      disableLoginShell: options.disableLoginShell,
     }),
     ...resolveCodexThreadEnvironmentSelection(options),
     developerInstructions:
@@ -243,6 +249,8 @@ export function buildThreadResumeParams(
     model?: string | null;
     hostSystemAgentActive?: boolean;
     restrictedToolSurfaceInheritedMcpServerNames?: readonly string[];
+    shellEnvironment?: Readonly<Record<string, string>>;
+    disableLoginShell?: boolean;
     preserveNativeModel?: boolean;
   },
 ): CodexThreadResumeParams {
@@ -301,6 +309,8 @@ export function buildThreadResumeParams(
       hostSystemAgentActive: options.hostSystemAgentActive,
       restrictedToolSurfaceInheritedMcpServerNames:
         options.restrictedToolSurfaceInheritedMcpServerNames,
+      shellEnvironment: options.shellEnvironment,
+      disableLoginShell: options.disableLoginShell,
     }),
     developerInstructions:
       options.developerInstructions ??
@@ -316,6 +326,7 @@ export function buildCodexRuntimeThreadConfig(
     directOnlyToolNamespaces?: readonly string[];
   } = {},
 ): JsonObject {
+  const configured = buildCodexProjectDocThreadConfig(config);
   // Native goal RPCs remain available through app-server, but the Codex goals
   // feature also starts autonomous turns. Keep it disabled until a run owner exists.
   const codeModeConfig: JsonObject = {
@@ -324,7 +335,7 @@ export function buildCodexRuntimeThreadConfig(
   };
   if (options.nativeCodeModeEnabled === false) {
     const disabledConfig = mergeCodexThreadConfigs(
-      config,
+      configured,
       CODEX_CODE_MODE_DISABLED_THREAD_CONFIG,
       CODEX_GOAL_CONTINUATION_DISABLED_THREAD_CONFIG,
       CODEX_NATIVE_UPDATE_PLAN_DISABLED_THREAD_CONFIG,
@@ -341,7 +352,7 @@ export function buildCodexRuntimeThreadConfig(
   if (options.nativeCodeModeOnlyEnabled === true) {
     const merged = mergeCodexThreadConfigs(
       codeModeConfig,
-      config,
+      configured,
       CODEX_GOAL_CONTINUATION_DISABLED_THREAD_CONFIG,
       CODEX_NATIVE_UPDATE_PLAN_DISABLED_THREAD_CONFIG,
       {
@@ -357,7 +368,7 @@ export function buildCodexRuntimeThreadConfig(
   }
   const merged = mergeCodexThreadConfigs(
     codeModeConfig,
-    config,
+    configured,
     CODEX_GOAL_CONTINUATION_DISABLED_THREAD_CONFIG,
     CODEX_NATIVE_UPDATE_PLAN_DISABLED_THREAD_CONFIG,
   ) ?? {
@@ -408,6 +419,8 @@ export function buildCodexRuntimeThreadConfigForRun(
     appServer?: Pick<CodexAppServerRuntimeOptions, "networkProxy">;
     hostSystemAgentActive?: boolean;
     restrictedToolSurfaceInheritedMcpServerNames?: readonly string[];
+    shellEnvironment?: Readonly<Record<string, string>>;
+    disableLoginShell?: boolean;
   } = {},
 ): JsonObject {
   const ringZeroActive =
@@ -465,14 +478,17 @@ export function buildCodexRuntimeThreadConfigForRun(
         ? undefined
         : { model_context_window: params.authoredContextTokenCap },
     ) ?? baseConfig;
-  if (params.bootstrapContextMode !== "lightweight") {
-    return runtimeConfig;
-  }
-  return (
-    mergeCodexThreadConfigs(runtimeConfig, CODEX_LIGHTWEIGHT_CONTEXT_THREAD_CONFIG) ?? {
-      ...runtimeConfig,
-      ...CODEX_LIGHTWEIGHT_CONTEXT_THREAD_CONFIG,
-    }
+  const contextConfig =
+    params.bootstrapContextMode !== "lightweight"
+      ? runtimeConfig
+      : (mergeCodexThreadConfigs(runtimeConfig, CODEX_LIGHTWEIGHT_CONTEXT_THREAD_CONFIG) ?? {
+          ...runtimeConfig,
+          ...CODEX_LIGHTWEIGHT_CONTEXT_THREAD_CONFIG,
+        });
+  return applyCodexManagedShellEnvironment(
+    contextConfig,
+    options.shellEnvironment,
+    options.disableLoginShell,
   );
 }
 
