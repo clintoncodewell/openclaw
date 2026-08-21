@@ -33,6 +33,7 @@ import {
   appendTranscriptEvent,
   appendTranscriptMessage,
   applySessionEntryLifecycleMutation,
+  assignSessionOwner,
   commitReplySessionInitialization,
   countSessionEntryRowsReadOnly,
   createSessionEntryWithTranscript,
@@ -835,6 +836,24 @@ describe("session accessor seam", () => {
     });
 
     expect(routed).toBeNull();
+    expect(loadSessionEntry({ sessionKey, storePath })).toBeUndefined();
+  });
+
+  it("runs the last-route ownership guard at the SQLite commit edge", async () => {
+    const sessionKey = "agent:main:webchat:dm:revoked-route";
+
+    await expect(
+      updateSessionLastRoute({
+        storePath,
+        sessionKey,
+        channel: "webchat",
+        to: "webchat:revoked-route",
+        assertCommitAllowed: () => {
+          throw new Error("route owner changed");
+        },
+      }),
+    ).rejects.toThrow("route owner changed");
+
     expect(loadSessionEntry({ sessionKey, storePath })).toBeUndefined();
   });
 
@@ -2119,6 +2138,11 @@ describe("session accessor seam", () => {
       ],
       skipMaintenance: true,
     });
+    const doneOwner = { id: "done-owner", type: "human" as const };
+    assignSessionOwner(
+      { sessionKey: "agent:main:done", storePath },
+      { assignedBy: doneOwner, owner: doneOwner },
+    );
 
     const result = await applySessionEntryReplacements({
       storePath,
@@ -2169,9 +2193,12 @@ describe("session accessor seam", () => {
       "agent:main:other",
       "agent:main:shared-running",
     ]);
-    expect(
-      listSessionEntriesByStatus({ storePath }, ["done"]).map((entry) => entry.sessionKey),
-    ).toEqual(["agent:main:done", "agent:main:shared-done"]);
+    const doneSessions = listSessionEntriesByStatus({ storePath }, ["done"]);
+    expect(doneSessions.map((entry) => entry.sessionKey)).toEqual([
+      "agent:main:done",
+      "agent:main:shared-done",
+    ]);
+    expect(doneSessions[0]?.entry.owner?.actor).toEqual(doneOwner);
 
     const other = loadSessionEntry({ sessionKey: "agent:main:other", storePath });
     expect(other).toBeDefined();
@@ -2592,6 +2619,8 @@ describe("session accessor seam", () => {
       sessionId: "lifecycle-prepare",
       updatedAt: 10,
     });
+    const owner = { id: "lifecycle-owner", type: "human" as const };
+    assignSessionOwner(scope, { assignedBy: owner, owner });
     const builderStarted = createDeferred();
     const builderGate = createDeferred();
     const pendingMutation = applySessionEntryLifecycleMutation({
@@ -2696,6 +2725,8 @@ describe("session accessor seam", () => {
       sessionId: scope.sessionId,
       updatedAt: 10,
     });
+    const owner = { id: "lifecycle-owner", type: "human" as const };
+    assignSessionOwner(scope, { assignedBy: owner, owner });
     await replaceTranscriptEvents(scope, [
       {
         id: "event-1",
