@@ -258,6 +258,11 @@ CREATE TABLE IF NOT EXISTS audit_identity_keys (
   created_at INTEGER NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS config_revision_keys (
+  id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+  hmac_key BLOB NOT NULL CHECK (length(hmac_key) = 32)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS execution_identity_contexts (
   context_id TEXT NOT NULL PRIMARY KEY CHECK (length(context_id) BETWEEN 1 AND 256),
   execution_id TEXT NOT NULL UNIQUE CHECK (length(execution_id) BETWEEN 1 AND 256),
@@ -2285,6 +2290,9 @@ CREATE TABLE IF NOT EXISTS worker_session_placement_moves (
   -- Keep this nullable column constraint-free so lazy ALTER TABLE produces the
   -- same shape as fresh databases; placement-move code validates its value.
   target_machine_class TEXT,
+  -- Explicit source abandonment is a durable operator decision. Keep the bit
+  -- bare and nullable so same-version older readers can safely omit it.
+  abandon_source INTEGER,
   last_error TEXT,
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
