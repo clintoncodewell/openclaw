@@ -15,11 +15,13 @@ import { HEARTBEAT_PROMPT } from "../../auto-reply/heartbeat.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { registerLegacyContextEngine } from "../../context-engine/legacy.registration.js";
 import {
-  clearContextEnginesForOwner,
   registerContextEngineForOwner,
   resolveContextEngine,
 } from "../../context-engine/registry.js";
-import { resetContextEngineRuntimeQuarantineForTests } from "../../context-engine/registry.test-support.js";
+import {
+  captureContextEngineRegistryStateForTests,
+  resetContextEngineRuntimeQuarantineForTests,
+} from "../../context-engine/registry.test-support.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { formatZonedTimestamp } from "../../infra/format-time/format-datetime.js";
 import {
@@ -4410,6 +4412,7 @@ describe("gateway healthHandlers.status scope handling", () => {
 
 describe("gateway healthHandlers.health cache freshness", () => {
   let healthHandlers: typeof import("./health.js").healthHandlers;
+  let restoreContextEngineRegistryState: () => void;
   const contextEngineTestOwner = "plugin:health-test";
 
   function createHealthSnapshot<T extends Record<string, unknown>>(overrides: T) {
@@ -4508,15 +4511,14 @@ describe("gateway healthHandlers.health cache freshness", () => {
   });
 
   beforeEach(() => {
+    restoreContextEngineRegistryState = captureContextEngineRegistryStateForTests();
     registerLegacyContextEngine();
-    clearContextEnginesForOwner(contextEngineTestOwner);
     resetContextEngineRuntimeQuarantineForTests();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    clearContextEnginesForOwner(contextEngineTestOwner);
-    resetContextEngineRuntimeQuarantineForTests();
+    restoreContextEngineRegistryState();
   });
 
   it("rate-limits request-driven refreshes for fresh cached health", async () => {
@@ -4545,6 +4547,33 @@ describe("gateway healthHandlers.health cache freshness", () => {
 
     await requestHealthSnapshot({ cached, refreshHealthSnapshot });
     await requestHealthSnapshot({ cached, refreshHealthSnapshot });
+
+    expect(refreshHealthSnapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a cached health snapshot dated after the current clock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    const cached = createHealthSnapshot({ ts: Date.now() + HEALTH_REFRESH_INTERVAL_MS });
+    const fresh = createHealthSnapshot({ ts: Date.now() });
+
+    const { respond, refreshHealthSnapshot } = await requestHealthSnapshot({ cached, fresh });
+
+    expect(refreshHealthSnapshot).toHaveBeenCalledOnce();
+    expect(respond).toHaveBeenCalledWith(true, fresh, undefined);
+  });
+
+  it("restarts request-driven health refreshes when the clock moves backward", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-28T12:00:00Z"));
+    const cached = createHealthSnapshot({});
+    const refreshHealthSnapshot = vi.fn().mockResolvedValue(cached);
+
+    await requestHealthSnapshot({ cached, refreshHealthSnapshot });
+    expect(refreshHealthSnapshot).toHaveBeenCalledOnce();
+
+    vi.setSystemTime(Date.now() - HEALTH_REFRESH_INTERVAL_MS);
+    await requestHealthSnapshot({ cached: { ...cached, ts: Date.now() }, refreshHealthSnapshot });
 
     expect(refreshHealthSnapshot).toHaveBeenCalledTimes(2);
   });

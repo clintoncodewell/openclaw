@@ -12,6 +12,8 @@
   --card-highlight: rgba(255, 255, 255, 0.04);
   --popover: #191c24;
   --popover-foreground: #f0f0f2;
+  --session-hovercard-surface: color-mix(in srgb, var(--card) 94%, black 6%);
+  --session-hovercard-progress-surface: color-mix(in srgb, var(--card) 58%, var(--bg) 42%);
 
   /* Panel */
   --panel: #0e1015;
@@ -83,6 +85,16 @@
   --accent-subtle: rgba(255, 92, 92, 0.1);
   --accent-foreground: #fafafa;
   --accent-glow: rgba(255, 92, 92, 0.2);
+  --inbox-attention: #e5243b;
+  --inbox-attention-hover: color-mix(in srgb, var(--inbox-attention) 88%, black);
+  --inbox-attention-foreground: #ffffff;
+
+  /* Lobster mascot icon (icons-tools.ts). Dark surfaces swallowed the shipped
+     #ff4d4d→#991b1b gradient, so dark mode lifts both stops; light mode
+     restores the original artwork below. */
+  --lobster-icon-body: #ff6d5a;
+  --lobster-icon-shade: #c2372b;
+  --lobster-icon-eye: #050810;
 
   /* Link text keeps the accent hue but cannot be --accent: chat paints user
      bubbles from that same token, so a link there fights its own background.
@@ -504,6 +516,12 @@
   --card-highlight: rgba(60, 42, 24, 0.03);
   --popover: #ffffff;
   --popover-foreground: #211e1a;
+  --session-hovercard-surface: var(--card);
+  --session-hovercard-progress-surface: color-mix(
+    in srgb,
+    var(--card) 54%,
+    var(--panel-strong) 46%
+  );
 
   --panel: #faf9f7;
   --panel-strong: #f4f1ec;
@@ -532,6 +550,11 @@
   --accent-glow: rgba(189, 69, 49, 0.12);
   --primary: #bd4531;
   --primary-foreground: #ffffff;
+
+  /* Original lobster artwork reads well on light surfaces. */
+  --lobster-icon-body: #ff4d4d;
+  --lobster-icon-shade: #991b1b;
+  --lobster-icon-eye: #050810;
 
   --secondary: #f4f1ec;
   --secondary-foreground: #403c35;
@@ -724,6 +747,12 @@
   --card-highlight: rgba(0, 0, 0, 0.02);
   --popover: #ffffff;
   --popover-foreground: #18181b;
+  --session-hovercard-surface: var(--card);
+  --session-hovercard-progress-surface: color-mix(
+    in srgb,
+    var(--card) 52%,
+    var(--panel-strong) 48%
+  );
 
   --panel: #f9f9fb;
   --panel-strong: #f2f2f5;
@@ -867,6 +896,12 @@
   --card-highlight: rgba(80, 50, 20, 0.02);
   --popover: #ffffff;
   --popover-foreground: #2c2118;
+  --session-hovercard-surface: var(--card);
+  --session-hovercard-progress-surface: color-mix(
+    in srgb,
+    var(--card) 48%,
+    var(--panel-strong) 52%
+  );
 
   --panel: #f7f2ec;
   --panel-strong: #f0e8e0;

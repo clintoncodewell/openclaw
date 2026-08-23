@@ -48,7 +48,7 @@ import { readChatSessionProjectionScope, reduceChatSessionProjection } from "./h
 import {
   reconcileChatRunFromCurrentSessionRow,
   reconcileChatRunFromSessionRow,
-  reconcileStaleChatRunAfterSessionStatePublication,
+  reconcileChatRunAfterSessionStatePublication,
 } from "./run-lifecycle.ts";
 import { applySessionMessagePayload } from "./session-message-apply.ts";
 import { rememberAuthoritativeTerminal } from "./terminal-message-identity.ts";
@@ -94,7 +94,7 @@ function reconcileSessionEvent(state: ChatPageHost, payload: unknown): SessionCh
     state.sessionsResult = state.sessions.state.result;
     state.sessionsResultAgentId = state.sessions.state.agentId;
     state.sessionsError = state.sessions.state.error;
-    reconcileStaleChatRunAfterSessionStatePublication(state);
+    reconcileChatRunAfterSessionStatePublication(state);
   }
   return reconciled;
 }
@@ -501,13 +501,13 @@ export function handlePageGatewayEvent(
   }
   if (event.event === "agent" || event.event === "session.tool") {
     if (handleAgentEvent(state as never, event.payload as never)) {
-      requestChatPageUpdate(state);
+      requestChatPageUpdate(state, "animation-frame");
     }
     return;
   }
   if (event.event === "session.operation") {
     handleSessionOperationEvent(state as never, event.payload as never);
-    requestChatPageUpdate(state);
+    requestChatPageUpdate(state, "animation-frame");
     return;
   }
   if (event.event === "chat.send_timing") {
@@ -517,13 +517,13 @@ export function handlePageGatewayEvent(
   if (event.event === "session.message") {
     handleSessionMessageEvent(state, event.payload, isPresented);
     void resumeStoredChatOutboxes(state);
-    requestChatPageUpdate(state);
+    requestChatPageUpdate(state, "animation-frame");
     return;
   }
   if (event.event === "sessions.changed") {
     handleSessionsChangedEvent(state, event.payload, isPresented);
     void resumeStoredChatOutboxes(state);
-    requestChatPageUpdate(state);
+    requestChatPageUpdate(state, "animation-frame");
     return;
   }
   if (event.event === "task") {
