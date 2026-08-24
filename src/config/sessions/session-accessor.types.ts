@@ -305,6 +305,8 @@ export type TranscriptMessageAppendOptions<TMessage> = {
   now?: number;
   /** Existing transcript event id owned by a caller with its own session tree. */
   eventId?: string;
+  /** Opt into synchronous display projection maintenance for an adopted display reader. */
+  maintainDisplayProjection?: boolean;
   /** Existing parent id owned by a caller with its own session tree. */
   parentId?: string | null;
   /** Optional finalizer that runs after duplicate detection but before persistence. */
@@ -403,7 +405,7 @@ export type SessionTranscriptTurnPersistOptions = {
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
   /** Message rows to append under one transcript write lock. */
   messages: readonly SessionTranscriptTurnMessageAppend[];
-  /** Exact run provenance emitted only for terminal assistant message updates. */
+  /** Exact run provenance persisted on output rows and emitted on terminal assistant updates. */
   runId?: string;
   /** Publish each appended message inline, one file-only invalidation, or nothing. */
   updateMode?: SessionTranscriptTurnUpdateMode;
