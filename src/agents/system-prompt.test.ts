@@ -217,7 +217,6 @@ describe("buildAgentSystemPrompt", () => {
       ownerNumbers: ["+123"],
       skillsPrompt:
         "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
-      heartbeatPrompt: "ping",
       toolNames: ["message", "memory_search", "read", "exec", "process"],
       docsPath: "/tmp/openclaw/docs",
       extraSystemPrompt: "Subagent details",
@@ -414,11 +413,10 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain("[[tts:");
   });
 
-  it("omits the heartbeat section when no heartbeat prompt is provided", () => {
+  it("keeps scheduled heartbeat instructions out of the system prompt", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       promptMode: "full",
-      heartbeatPrompt: undefined,
     });
 
     expect(prompt).not.toContain("## Heartbeats");
@@ -585,6 +583,27 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).not.toContain('[embed content_type="html" title="Status"]...[/embed]');
   });
 
+  it("offers routine promotion only when the automations tool is available", () => {
+    const withAutomations = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["automations"],
+    });
+    const withoutAutomations = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["read"],
+    });
+
+    expect(withAutomations).toContain("asked a 3rd time");
+    expect(withAutomations).toContain("get a yes, create it");
+    expect(withAutomations).toContain("failed test => say so and remove it");
+    // Created enabled on purpose: the scheduler alerts and auto-disables a
+    // failing enabled job, but nothing watches one left disabled.
+    expect(withAutomations).not.toContain("enabled:false");
+    // Gated: without the tool the trigger would point at a capability the
+    // model cannot reach.
+    expect(withoutAutomations).not.toContain("asked a 3rd time");
+  });
+
   it("teaches direct status answers only on the full Control UI surface", () => {
     const defaultPrompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -669,14 +688,14 @@ describe("buildAgentSystemPrompt", () => {
     );
   });
 
-  it("guides visible terminal work separately from quiet exec", () => {
+  it("describes operator-owned terminals and policy-governed agent input", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["exec", "terminal"],
     });
 
     expect(prompt).toContain(
-      "- terminal: Own visible shell. Use for long/interactive jobs user should watch. exec for quiet work",
+      "- terminal: List/read/resize/close operator-opened session terminals; input follows exec policy and may require exact-input approval; never open shells",
     );
   });
 
@@ -1325,7 +1344,6 @@ describe("buildAgentSystemPrompt", () => {
       for (const lineEnding of ["\n", "\r\n"]) {
         const prompt = buildAgentSystemPrompt({
           workspaceDir: "/tmp/openclaw",
-          heartbeatPrompt: "heartbeat probe",
           contextFiles: [
             {
               path: "AGENTS.md",
@@ -1336,8 +1354,7 @@ describe("buildAgentSystemPrompt", () => {
 
         expect(prompt).toContain("Keep this user guidance.");
         expect(prompt).toContain("Keep this too.");
-        expect(prompt).toContain("## Heartbeats");
-        expect(prompt).toContain("NO_REPLY");
+        expect(prompt).not.toContain("## Heartbeats");
         expect(prompt).not.toContain("HEARTBEAT_OK");
         expect(prompt).not.toContain("HEARTBEAT.md");
         expect(prompt).not.toContain(heartbeatPrompt);

@@ -73,7 +73,6 @@ type ChatTranscriptProjection = {
 type ChatRenderItem = ReturnType<typeof coalesceAgentRunFrames>[number];
 
 type LoadedReplySource = {
-  rowKey: string;
   message: unknown;
   messageId: string;
   senderLabel: string;
@@ -269,6 +268,7 @@ export function projectChatTranscript(
   >();
   const turnRecapByGroupKey = new Map<string, TurnRecap>();
   const loadedReplySources = new Map<string, LoadedReplySource>();
+  const messageRowKeysById = new Map<string, string>();
   const resolvedReplyPreviews = new Map<
     string,
     (MessageReplyTarget & { sourceMessageId: string }) | undefined
@@ -304,11 +304,12 @@ export function projectChatTranscript(
     onRequestUpdate: requestUpdate,
     resourceBasePath: props.resourceBasePath,
     localMediaPreviewRoots: props.localMediaPreviewRoots ?? [],
+    connectionEpoch: props.connectionEpoch,
     assistantAttachmentAuthToken: props.assistantAttachmentAuthToken ?? null,
     resolveArtifactDownload: props.resolveArtifactDownload,
-    onAssistantAttachmentLoaded: props.onAssistantAttachmentLoaded,
     onRequestOpenImage: props.onRequestOpenImage,
     onOpenImage: props.onOpenImage,
+    onAssistantAttachmentLoaded: props.onAssistantAttachmentLoaded,
     canvasPluginSurfaceUrl: props.canvasPluginSurfaceUrl,
     embedSandboxMode: props.embedSandboxMode ?? "scripts",
     allowExternalEmbedUrls: props.allowExternalEmbedUrls ?? false,
@@ -555,8 +556,8 @@ export function projectChatTranscript(
       for (const source of group.messages) {
         const sourceMessageId = persistedMessageEntryId(source.message);
         if (sourceMessageId && extractTextCached(source.message)?.trim()) {
+          messageRowKeysById.set(sourceMessageId, item.key);
           loadedReplySources.set(sourceMessageId, {
-            rowKey: item.key,
             message: source.message,
             messageId: source.key,
             senderLabel,
@@ -565,9 +566,7 @@ export function projectChatTranscript(
       }
     }
   }
-  transcript.syncMessageRows(
-    new Map([...loadedReplySources].map(([messageId, source]) => [messageId, source.rowKey])),
-  );
+  transcript.syncMessageRows(messageRowKeysById);
   let turnRecapOwnerKey: string | null = null;
   if (turnRecap !== null) {
     const lastItem = transcriptItems.at(-1);
@@ -585,17 +584,15 @@ export function projectChatTranscript(
   }
   // New row keys measure expanded work immediately; existing keys keep their
   // cached height until ResizeObserver reports the changed layout.
-  const transcriptRows = transcriptItems.flatMap((item): TranscriptRow<ChatRenderItem>[] =>
-    [{ kind: "item" as const, key: item.key, item }].concat(
-      item.kind === "work-group" && expandedToolCards.get(item.key)
-        ? item.groups.map((group) => ({
-            kind: "item" as const,
-            key: `${item.key}:${group.key}`,
-            item: group,
-          }))
-        : [],
-    ),
-  );
+  const transcriptRows: TranscriptRow<ChatRenderItem>[] = [];
+  for (const item of transcriptItems) {
+    transcriptRows.push({ kind: "item", key: item.key, item });
+    if (item.kind === "work-group" && expandedToolCards.get(item.key)) {
+      for (const group of item.groups) {
+        transcriptRows.push({ kind: "item", key: `${item.key}:${group.key}`, item: group });
+      }
+    }
+  }
   const realtimeConversation = renderRealtimeTalkConversation(props);
   if (realtimeConversation !== nothing) {
     transcriptRows.push({
@@ -624,11 +621,7 @@ export function projectChatTranscript(
   }
   const typingIndicator = renderChatTypingIndicator(props.typingActors);
   if (typingIndicator) {
-    transcriptRows.push({
-      kind: "content",
-      key: "presence:typing",
-      content: typingIndicator,
-    });
+    transcriptRows.push({ kind: "content", key: "presence:typing", content: typingIndicator });
   }
   trackTranscriptRenderDependencies(state, [
     chatItems,
@@ -662,7 +655,6 @@ export function projectChatTranscript(
     props.userId,
     props.userName,
     props.userAvatar,
-    props.typingActors,
     props.resourceBasePath,
     (props.localMediaPreviewRoots ?? []).join("\u0000"),
     props.assistantAttachmentAuthToken,
@@ -676,6 +668,8 @@ export function projectChatTranscript(
     props.replyMessageAccess?.revision ?? 0,
     props.replyMessageAccess?.navigationId ?? "",
     turnRecap === null ? "" : `${turnRecap.runtimeMs}:${turnRecap.outputTokens ?? ""}`,
+    props.runStatus?.phase ?? "",
+    props.runStatus?.occurredAt ?? 0,
   ]);
   state.transcriptRenderContext.onSetReply = props.onSetReply;
   state.transcriptRenderContext.onOpenReply = (replyToId) => {

@@ -163,7 +163,7 @@ function isBootstrapContextFile(pathValue: string): boolean {
 
 function sanitizeContextFileContentForPrompt(content: string): string {
   // Old workspace templates otherwise route Claude subscriptions to paid extra
-  // usage; heartbeat behavior remains in the real user turn and generated section.
+  // usage; heartbeat behavior remains in the actual scheduled user turn.
   return content.replaceAll(DEFAULT_HEARTBEAT_PROMPT_CONTEXT_BLOCK, "").replace(/\n{3,}/g, "\n\n");
 }
 
@@ -237,18 +237,6 @@ function buildProjectContextSection(params: {
     lines.push(`## ${file.path}`, "", sanitizeContextFileContentForPrompt(file.content), "");
   }
   return lines;
-}
-
-function buildHeartbeatSection(params: { isMinimal: boolean; heartbeatPrompt?: string }) {
-  if (params.isMinimal || !params.heartbeatPrompt) {
-    return [];
-  }
-  return [
-    "## Heartbeats",
-    `Heartbeat poll; nothing needs attention: reply exactly ${SILENT_REPLY_TOKEN}.`,
-    "Attention needed: alert text only.",
-    "",
-  ];
 }
 
 function buildExecApprovalPromptGuidance(params: {
@@ -817,7 +805,6 @@ export function buildAgentSystemPrompt(params: {
   bootstrapTruncationNotice?: string;
   skillsPrompt?: string;
   codeModeActive?: boolean;
-  heartbeatPrompt?: string;
   docsPath?: string;
   sourcePath?: string;
   workspaceNotes?: string[];
@@ -909,9 +896,8 @@ export function buildAgentSystemPrompt(params: {
     // Channel docking: add login tools here when a channel needs interactive linking.
     browser: "Control browser",
     screen: "Drive operator web UI",
-    terminal: availableTools.has("exec")
-      ? "Own visible shell. Use for long/interactive jobs user should watch. exec for quiet work"
-      : "Own visible shell. Use for long/interactive jobs user should watch",
+    terminal:
+      "List/read/resize/close operator-opened session terminals; input follows exec policy and may require exact-input approval; never open shells",
     canvas: "Present/eval/snapshot Canvas",
     nodes: "Paired node status/control/media",
     [AUTOMATIONS_TOOL_NAME]:
@@ -1040,6 +1026,7 @@ export function buildAgentSystemPrompt(params: {
   const hasGateway = availableTools.has("gateway");
   const hasOpenClaw = availableTools.has("openclaw");
   const messageToolAvailable = availableTools.has("message");
+  const hasAutomations = availableTools.has(AUTOMATIONS_TOOL_NAME);
   const readToolName = resolveToolName("read");
   const waitToolHints = [
     hasExec ? `${resolveToolName("exec")} yieldMs` : "",
@@ -1077,7 +1064,6 @@ export function buildAgentSystemPrompt(params: {
   const userTimezone = params.userTimezone?.trim();
   const userDate = params.userDate?.trim();
   const skillsPrompt = params.skillsPrompt?.trim();
-  const heartbeatPrompt = params.heartbeatPrompt?.trim();
   const runtimeInfo = params.runtimeInfo;
   const modelIdentityLine = buildModelIdentityPromptLine(runtimeInfo?.model);
   const runtimeChannel = normalizeOptionalLowercaseString(runtimeInfo?.channel);
@@ -1266,6 +1252,18 @@ export function buildAgentSystemPrompt(params: {
               : []),
             ...(availableTools.has("screen")
               ? ["`screen` present: web/app turn may drive UI; messaging turn: don't."]
+              : []),
+            // The repeat is noticed during ordinary work, not while reading the
+            // automations schema, so this trigger cannot live in that tool's
+            // description; it is gated on the tool so it vanishes when absent.
+            // Create enabled: a failing enabled job is alerted and auto-disabled
+            // by the scheduler, while a job left disabled pending confirmation
+            // is watched by nothing and dies silently.
+            ...(hasAutomations
+              ? [
+                  `Same job asked a 3rd time: do it, then offer a routine. Check \`${resolveToolName(AUTOMATIONS_TOOL_NAME)}\` list first; never duplicate one.`,
+                  "Promote = restate schedule+task plainly, get a yes, create it (delivery defaults here), then force `run` once as a visible test; failed test => say so and remove it.",
+                ]
               : []),
           ]
         : []),
@@ -1554,8 +1552,6 @@ export function buildAgentSystemPrompt(params: {
   // Watched sessions change rarely but per-session; keep them below the cache
   // boundary so the shared stable prefix stays byte-identical across sessions.
   lines.push(...buildWatchedSessionsPromptLines(params.preparedWatchedSessions));
-
-  lines.push(...buildHeartbeatSection({ isMinimal, heartbeatPrompt }));
 
   lines.push(
     "## Runtime",
