@@ -7,8 +7,10 @@ export function createExtensionCodexAppServerAttemptExtraVitestConfig(
   return createScopedVitestConfig(
     [
       "extensions/codex/src/app-server/run-attempt.agent-end-context.test.ts",
+      "extensions/codex/src/app-server/run-attempt.channel-tool-progress.test.ts",
       "extensions/codex/src/app-server/run-attempt-lifecycle-controller.test.ts",
       "extensions/codex/src/app-server/run-attempt-thread-cleanup.test.ts",
+      "extensions/codex/src/app-server/run-attempt.channel-tool-progress.test.ts",
       "extensions/codex/src/app-server/run-attempt.configured-mcp.test.ts",
       "extensions/codex/src/app-server/run-attempt.context-engine.test.ts",
       "extensions/codex/src/app-server/run-attempt.dynamic-tools.test.ts",
