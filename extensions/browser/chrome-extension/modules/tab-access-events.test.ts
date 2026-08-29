@@ -35,6 +35,14 @@ function createHarness(
   const send = vi.fn();
   const policy = {
     mode,
+    observeTabUpdate: vi.fn(
+      (_tabId: number, change: { url?: string; groupId?: number }) =>
+        typeof change.url === "string" ||
+        (mode === "selected" && typeof change.groupId === "number"),
+    ),
+    retireTab: vi.fn(() => {
+      revision += 1;
+    }),
     beginRevocation: vi.fn(() => Symbol("revocation")),
     endRevocation: vi.fn(),
     capture: vi.fn(() => ({ revision, tabRevision: 0 })),
@@ -48,6 +56,9 @@ function createHarness(
       revision += 1;
       return undefined;
     }),
+    retireTabDocument: vi.fn(),
+    forwardDocumentEvent: vi.fn((event, emit) => emit(event)),
+    invalidateDocumentGroup: vi.fn(),
     invalidateAll: vi.fn(() => {
       revision += 1;
     }),

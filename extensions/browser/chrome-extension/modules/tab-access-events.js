@@ -25,13 +25,16 @@ export function registerTabAccessEvents({
     if (!accessEpoch || !policy.epochIsCurrent(source.tabId, accessEpoch)) {
       return;
     }
-    send({
-      type: "cdpEvent",
-      tabId: source.tabId,
-      ...(source.sessionId ? { sessionId: source.sessionId } : {}),
-      method,
-      params,
-    });
+    policy.forwardDocumentEvent(
+      {
+        type: "cdpEvent",
+        tabId: source.tabId,
+        ...(source.sessionId ? { sessionId: source.sessionId } : {}),
+        method,
+        params,
+      },
+      send,
+    );
   });
 
   chromeApi.debugger.onDetach.addListener((source, reason) => {
@@ -42,9 +45,11 @@ export function registerTabAccessEvents({
     attachedAccessEpochs.delete(source.tabId);
     send({ type: "detached", tabId: source.tabId, reason });
     if (reason !== "canceled_by_user") {
+      policy.retireTabDocument(source.tabId);
       return;
     }
     const revocation = policy.beginRevocation(source.tabId);
+    policy.retireTabDocument(source.tabId);
     void runAccessMutation(async () => {
       try {
         await accessReady;
@@ -62,9 +67,9 @@ export function registerTabAccessEvents({
   });
 
   chromeApi.tabs.onRemoved.addListener((tabId) => {
+    policy.retireTab(tabId);
     void (async () => {
       await accessReady;
-      policy.invalidateTab(tabId);
       attachedTabs.delete(tabId);
       attachedAccessEpochs.delete(tabId);
       scheduleTabsSync();
@@ -74,7 +79,8 @@ export function registerTabAccessEvents({
 
   chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     const revocation = policy.beginRevocation(addedTabId);
-    policy.invalidateTab(removedTabId);
+    policy.retireTab(addedTabId);
+    policy.retireTab(removedTabId);
     attachedTabs.delete(removedTabId);
     attachedAccessEpochs.delete(removedTabId);
     scheduleTabsSync();
@@ -93,10 +99,7 @@ export function registerTabAccessEvents({
 
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     scheduleTabsSync();
-    if (
-      typeof changeInfo.url === "string" ||
-      (policy.mode === ACCESS_MODE_SELECTED && typeof changeInfo.groupId === "number")
-    ) {
+    if (policy.observeTabUpdate(tabId, changeInfo, tab)) {
       const renewed = policy.renewTabAccess(tabId, attachedAccessEpochs.get(tabId), tab);
       if (renewed && attachedTabs.has(tabId)) {
         attachedAccessEpochs.set(tabId, renewed);
@@ -126,15 +129,16 @@ export function registerTabAccessEvents({
     })();
   });
 
-  const onGroupChanged = () => {
+  const onGroupChanged = (group) => {
     const eventRevision = ++groupEventRevision;
     scheduleTabsSync();
+    policy.invalidateDocumentGroup(group);
     if (policy.mode !== ACCESS_MODE_SELECTED) {
       return;
     }
     // Group title/removal changes mutate the selected-mode ACL. Retire every
     // attachment epoch synchronously before any readiness or Chrome lookup.
-    policy.invalidateAll();
+    policy.invalidateAll(group);
     void accessReady.then(async () => {
       if (eventRevision !== groupEventRevision || policy.mode !== ACCESS_MODE_SELECTED) {
         return;
@@ -192,5 +196,5 @@ export function registerTabAccessEvents({
     });
   };
   chromeApi.tabGroups.onUpdated.addListener(onGroupChanged);
-  chromeApi.tabGroups.onRemoved.addListener(onGroupChanged);
+  chromeApi.tabGroups.onRemoved.addListener((group) => onGroupChanged(group));
 }

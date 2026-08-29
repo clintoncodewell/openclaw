@@ -242,6 +242,16 @@ function renderSessionContext({
       >`
     : nothing;
   const context = row?.workContext;
+  const placementIdentity =
+    row?.placementProviderId && row.placementProfileId
+      ? {
+          label: `${row.placementProviderId} · ${row.placementProfileId}`,
+          title: t("sessionHovercard.runsOn", {
+            providerId: row.placementProviderId,
+            profileId: row.placementProfileId,
+          }),
+        }
+      : undefined;
   const participantIds = new Set<string>();
   let excludedProjectedCount = 0;
   const participants = (row?.participants ?? []).filter((participant) => {
@@ -275,7 +285,14 @@ function renderSessionContext({
   ]
     .filter(Boolean)
     .join(" ");
-  if (!creatorLabel && !context && visibleParticipants.length === 0) {
+  if (
+    !creatorLabel &&
+    !context &&
+    !placementIdentity &&
+    visibleParticipants.length === 0 &&
+    row?.boardFace !== "dashboard" &&
+    row?.hasAutomation !== true
+  ) {
     return nothing;
   }
   if (row?.channelAvatarUrl) {
@@ -387,13 +404,66 @@ function renderSessionContext({
               </div>`
             : nothing}`
       : nothing}
+    ${placementIdentity
+      ? html`<div
+          class="session-hovercard__context-row"
+          aria-label=${placementIdentity.title}
+          title=${placementIdentity.title}
+        >
+          <span class="session-hovercard__context-icon" aria-hidden="true">${icons.server}</span>
+          <span class="session-hovercard__context-value session-hovercard__context-text"
+            >${placementIdentity.label}</span
+          >
+        </div>`
+      : nothing}
+    ${row?.boardFace === "dashboard"
+      ? html`<div
+          class="session-hovercard__context-row"
+          aria-label=${t("sessionsView.opensAsDashboard")}
+        >
+          <span class="session-hovercard__context-icon" aria-hidden="true"
+            >${icons.layoutDashboard}</span
+          >
+          <span class="session-hovercard__context-value session-hovercard__context-text"
+            >${t("sessionsView.opensAsDashboard")}</span
+          >
+        </div>`
+      : nothing}
+    ${row?.hasAutomation === true
+      ? html`<div
+          class="session-hovercard__context-row"
+          aria-label=${t("sessionsView.automationAttached")}
+        >
+          <span class="session-hovercard__context-icon" aria-hidden="true">${icons.clock}</span>
+          <span class="session-hovercard__context-value session-hovercard__context-text"
+            >${t("sessionsView.automationAttached")}</span
+          >
+        </div>`
+      : nothing}
   </div>`;
+}
+
+function renderPullRequestAuthor(author: ControlUiSessionPullRequest["author"]) {
+  // Each row is its own grid, so the cell is always emitted: dropping it would
+  // move the diff stats out of the trailing 1fr column and break the flush-right
+  // alignment that authored and authorless rows must share.
+  if (!author) {
+    return html`<span class="session-hovercard__pr-author"></span>`;
+  }
+  return html`<span
+    class="session-hovercard__pr-author"
+    title=${t("sessionHovercard.pullRequestAuthorLabel", { login: author.login })}
+    >${author.login}</span
+  >`;
 }
 
 function renderPullRequestRow(pullRequest: ControlUiSessionPullRequest) {
   const state = pullRequestStateLabel(pullRequest.state);
   const checks = pullRequest.checks ? checksLabel(pullRequest.checks) : null;
   const details = [
+    pullRequest.author
+      ? t("sessionHovercard.pullRequestAuthorLabel", { login: pullRequest.author.login })
+      : null,
     checks,
     pullRequest.changedFiles === undefined ? null : changedFilesLabel(pullRequest.changedFiles),
     pullRequest.additions === undefined ? null : `+${pullRequest.additions.toLocaleString()}`,
@@ -419,7 +489,7 @@ function renderPullRequestRow(pullRequest: ControlUiSessionPullRequest) {
       >${pullRequestStateIcon(pullRequest.state)}</span
     >
     <span class="session-hovercard__pr-number">#${pullRequest.number}</span>
-    ${renderDiffStats(pullRequest)}
+    ${renderPullRequestAuthor(pullRequest.author)}${renderDiffStats(pullRequest)}
   </a>`;
 }
 
@@ -474,6 +544,9 @@ export function renderSessionHovercard(input: SessionHovercardInput) {
     input.row?.channelAvatarUrl ||
     input.row?.createdActor ||
     input.row?.workContext ||
+    (input.row?.placementProviderId && input.row.placementProfileId) ||
+    input.row?.boardFace === "dashboard" ||
+    input.row?.hasAutomation === true ||
     hasOtherParticipant,
   );
   const lastMessagePreview = input.progressCard

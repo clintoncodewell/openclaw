@@ -614,8 +614,7 @@ suite.define(() => {
           samples.push({
             hiddenNotice: pane?.textContent?.includes("Showing last") ?? false,
             loading:
-              pane?.querySelector(".chat-history-sentinel openclaw-panel-loading-skeleton") !==
-              null,
+              pane?.querySelector('.chat-history-boundary__action[aria-busy="true"]') !== null,
             messageCount: pane?.state?.chatMessages?.length ?? 0,
             minOpacity: rows.reduce(
               (minimum, row) => Math.min(minimum, Number.parseFloat(getComputedStyle(row).opacity)),

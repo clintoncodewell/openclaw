@@ -1940,6 +1940,23 @@ describe("resolveTsdownBuildInvocation", () => {
     await expectPathMissing(outputDir);
   });
 
+  it.each([".", "src"])(
+    "refuses an output root containing checkout artifact ownership from %s",
+    async (directory) => {
+      const rootDir = createTempDir("openclaw-tsdown-owner-clean-");
+      const cwd = path.join(rootDir, directory);
+      const owner = path.join(rootDir, ".artifacts/dist-artifacts.lock/owner.json");
+      await fsPromises.mkdir(path.dirname(owner), { recursive: true });
+      await fsPromises.mkdir(cwd, { recursive: true });
+      await fsPromises.mkdir(path.join(rootDir, ".git"));
+      await fsPromises.writeFile(owner, "owned");
+      expect(() =>
+        cleanTsdownOutputRoots({ cwd, roots: [path.join(rootDir, ".artifacts")] }),
+      ).toThrow("Cannot clean the checkout's dist artifact ownership location");
+      expect(await fsPromises.readFile(owner, "utf8")).toBe("owned");
+    },
+  );
+
   it("refuses to clean the working directory and leaves it intact", async () => {
     const rootDir = createTempDir("openclaw-tsdown-cwd-clean-");
     const keepFile = path.join(rootDir, "keep.js");
@@ -2254,6 +2271,69 @@ describe("runTsdownBuildInvocation", () => {
     expect(output.chunks.join("")).toContain("stdout-ok");
   });
 
+  it("preserves successful declarations when the native compiler fails", async () => {
+    const rootDir = fs.realpathSync(createTempDir("openclaw-tsdown-native-dts-"));
+    const sourcePath = path.join(rootDir, "index.ts");
+    const declarationPath = path.join(rootDir, "dist", "index.d.ts");
+    fs.writeFileSync(path.join(rootDir, "package.json"), '{"type":"module"}\n');
+    fs.writeFileSync(
+      path.join(rootDir, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ESNext",
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          declaration: true,
+          emitDeclarationOnly: true,
+          noCheck: true,
+          noEmitOnError: false,
+          rootDir,
+        },
+        files: [sourcePath],
+      }),
+    );
+    const buildOptions = {
+      clean: false,
+      config: false,
+      cwd: rootDir,
+      entry: [sourcePath],
+      fixedExtension: false,
+      format: "esm",
+      logLevel: "error",
+      outDir: path.join(rootDir, "dist"),
+      platform: "node",
+      report: false,
+      tsconfig: path.join(rootDir, "tsconfig.json"),
+    };
+    const script = [
+      'import { build } from "tsdown";',
+      'const nativePackage = import.meta.resolve("@typescript/native-preview/package.json");',
+      'const { default: getExePath } = await import(new URL("lib/getExePath.js", nativePackage).href);',
+      `await build({ ...${JSON.stringify(buildOptions)}, dts: { generator: "tsgo", emitDtsOnly: true, tsgo: { path: getExePath() } } });`,
+    ].join("\n");
+    const output = createWriteSink();
+    // Keep compiler scratch output inside the fixture even when compilation rejects.
+    const env = { ...process.env, TMPDIR: rootDir, TEMP: rootDir, TMP: rootDir };
+    const invocation = {
+      command: process.execPath,
+      args: ["--input-type=module", "-e", script],
+      options: { stdio: ["ignore", "pipe", "pipe"], shell: false, env },
+    };
+    const runOptions = { stdout: output.sink, stderr: output.sink };
+
+    fs.writeFileSync(sourcePath, 'export const broken = "healthy";\n');
+    const healthy = await runTsdownBuildInvocation(invocation, runOptions);
+    expect(healthy.status, healthy.captured).toBe(0);
+    const declarations = fs.readFileSync(declarationPath, "utf8");
+    expect(declarations).toContain('"healthy"');
+
+    fs.writeFileSync(sourcePath, "export const broken = ;\n");
+    const failed = await runTsdownBuildInvocation(invocation, runOptions);
+    expect(failed.captured).toContain("TS1109");
+    expect(failed.status, failed.captured).toBeGreaterThan(0);
+    expect(fs.readFileSync(declarationPath, "utf8")).toBe(declarations);
+  });
+
   it("rejects malformed OPENCLAW_TSDOWN_TIMEOUT_MS values", async () => {
     const invocation = {
       command: process.execPath,
@@ -2445,10 +2525,10 @@ describe("runTsdownBuildInvocation", () => {
         ].join("");
         const runnerScript = [
           `import { runTsdownBuildInvocation } from ${JSON.stringify(scriptUrl)};`,
-          "await runTsdownBuildInvocation(",
+          "const result = await runTsdownBuildInvocation(",
           `  { command: process.execPath, args: ['-e', ${JSON.stringify(parentScript)}], options: { stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: process.env } },`,
           "  { env: { ...process.env, OPENCLAW_TSDOWN_HEARTBEAT_MS: '0' } },",
-          ");",
+          "); process.exitCode = result.status ?? 1;",
         ].join("\n");
 
         runner = spawn(process.execPath, ["--input-type=module", "-e", runnerScript], {
@@ -2463,8 +2543,8 @@ describe("runTsdownBuildInvocation", () => {
         runner.kill("SIGTERM");
 
         await expect(waitForChildClose(runner)).resolves.toEqual({
-          code: null,
-          signal: "SIGTERM",
+          code: 143,
+          signal: null,
         });
         await waitForDead(childPid, 2_000);
       } finally {

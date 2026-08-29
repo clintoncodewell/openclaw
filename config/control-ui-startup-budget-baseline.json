@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 347255,
-  "reason": "compact mobile session sharing with preserved draft state and a bounded member drilldown; recorded at the CI build-artifacts lane (347255 B)",
-  "updatedAt": "2026-08-28"
+  "startupJsGzipBytes": 345606,
+  "reason": "Generation-safe optimistic session deletion (#132233, fixing #132057); measured 345606 B after current-main integration, below the maintainer-approved 347323 B baseline; hard cap and allowances unchanged",
+  "updatedAt": "2026-08-29"
 }
