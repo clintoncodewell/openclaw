@@ -7,28 +7,27 @@ import {
   VOICE_TRANSCRIPT_QUEUE_POLICY,
 } from "../../../../src/talk/voice-transcript.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
+import { t } from "../../i18n/index.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import { GatewayRelayRealtimeTalkTransport } from "./realtime-talk-gateway-relay.ts";
-import { GoogleLiveRealtimeTalkTransport } from "./realtime-talk-google-live.ts";
+import { RealtimeTalkInputController } from "./realtime-talk-input.ts";
 import type {
   RealtimeTalkCallbacks,
   RealtimeTalkGatewayRelaySessionResult,
-  RealtimeTalkJsonPcmWebSocketSessionResult,
   RealtimeTalkSessionResult,
   RealtimeTalkStatus,
   RealtimeTalkTransport,
-  RealtimeTalkTransportContext,
-  RealtimeTalkWebRtcSdpSessionResult,
 } from "./realtime-talk-shared.ts";
 import {
   type ClientVoiceSessionOwner,
   type DetachedVoiceSession,
   reserveClientVoiceSessionOwner,
   retireUncommittedRealtimeTalkTransport,
-  transcriptPersistenceAbortError,
-  waitForTranscriptRetry,
+  retryVoiceTranscriptPersistence,
 } from "./realtime-talk-transcript-owner.ts";
-import { WebRtcSdpRealtimeTalkTransport } from "./realtime-talk-webrtc.ts";
+import {
+  createRealtimeTalkTransport,
+  resolveRealtimeTalkTransport,
+} from "./realtime-talk-transport.ts";
 
 export type { RealtimeTalkStatus };
 
@@ -98,38 +97,6 @@ function normalizeLaunchTransport(value: unknown): RealtimeTalkLaunchTransport |
   return undefined;
 }
 
-function createTransport(
-  session: RealtimeTalkSessionResult,
-  ctx: RealtimeTalkTransportContext,
-): RealtimeTalkTransport {
-  const transport = resolveTransport(session);
-  if (transport === "webrtc") {
-    return new WebRtcSdpRealtimeTalkTransport(session as RealtimeTalkWebRtcSdpSessionResult, ctx);
-  }
-  if (transport === "provider-websocket") {
-    return new GoogleLiveRealtimeTalkTransport(
-      session as RealtimeTalkJsonPcmWebSocketSessionResult,
-      ctx,
-    );
-  }
-  if (transport === "gateway-relay") {
-    return new GatewayRelayRealtimeTalkTransport(
-      session as RealtimeTalkGatewayRelaySessionResult,
-      ctx,
-    );
-  }
-  const unknownTransport = (session as { transport?: string }).transport ?? "unknown";
-  throw new Error(`Unsupported realtime Talk transport: ${unknownTransport}`);
-}
-
-function resolveTransport(session: RealtimeTalkSessionResult): string {
-  return normalizeTalkTransport((session as { transport?: string }).transport) ?? "webrtc";
-}
-
-function transcriptWriteError(error: unknown, fallback: string): Error {
-  return error instanceof Error ? error : new Error(fallback, { cause: error });
-}
-
 function compactLaunchParams(
   params: RealtimeTalkLaunchOptions & {
     sessionKey: string;
@@ -143,7 +110,7 @@ function compactLaunchParams(
 
 export class RealtimeTalkSession {
   private transport: RealtimeTalkTransport | null = null;
-  private pendingTransport: RealtimeTalkTransport | null = null;
+  private pendingStartup: Pick<RealtimeTalkTransport, "stop"> | null = null;
   private closed = false;
   private lifecycleGeneration = 0;
   private videoEnabled = false;
@@ -167,11 +134,12 @@ export class RealtimeTalkSession {
   async start(): Promise<void> {
     const owner = reserveClientVoiceSessionOwner(this.client, this.sessionKey);
     let ownerTransferred = false;
+    let input: RealtimeTalkInputController | undefined;
     try {
       const lifecycleGeneration = ++this.lifecycleGeneration;
-      this.stopPendingTransport();
+      this.stopPendingStartup();
       this.closed = false;
-      this.callbacks.onStatus?.("connecting");
+      this.callbacks.onStatus?.("connecting", t("chat.voice.preparing"));
       const existingTransport = this.transport;
       const existingVoiceSessionId = this.voiceSessionId;
       const existingOwner = this.clientVoiceSessionOwner;
@@ -182,6 +150,25 @@ export class RealtimeTalkSession {
       if (this.closed || lifecycleGeneration !== this.lifecycleGeneration) {
         return;
       }
+      input = new RealtimeTalkInputController(
+        () => undefined,
+        (detail) => this.callbacks.onStatus?.("connecting", detail),
+      );
+      this.pendingStartup = input;
+      try {
+        // Browser permission can wait indefinitely; do not spend a provider's
+        // short activation window until the candidate owns its microphone.
+        await input.open(this.localOptions.inputDeviceId);
+      } catch (error) {
+        if (this.closed || lifecycleGeneration !== this.lifecycleGeneration) {
+          return;
+        }
+        throw error;
+      }
+      if (this.closed || lifecycleGeneration !== this.lifecycleGeneration) {
+        return;
+      }
+      input.requireStream();
       // Declaring voice-transcript arms the server-side spoken-confirmation gate;
       // this client reports every finalized utterance, so the gate is completable.
       const capabilities: Array<"camera-frame" | "voice-transcript"> = ["voice-transcript"];
@@ -189,7 +176,7 @@ export class RealtimeTalkSession {
         capabilities.push("camera-frame");
       }
       const session = await this.createSession({ ...this.options, capabilities });
-      const transport = resolveTransport(session);
+      const transport = resolveRealtimeTalkTransport(session);
       // Managed-room stays unsupported here and carries no voice bookkeeping;
       // reject it before the voice-session requirement produces a misleading error.
       if (transport === "managed-room") {
@@ -236,25 +223,27 @@ export class RealtimeTalkSession {
       let nextTransport: RealtimeTalkTransport | null = null;
       let startResult: Awaited<ReturnType<RealtimeTalkTransport["start"]>>;
       try {
-        nextTransport = createTransport(session, {
+        input.requireStream();
+        nextTransport = createRealtimeTalkTransport(session, {
           client: this.client,
           sessionKey: this.sessionKey,
           voiceSessionId,
           flushTranscriptWrites: async () => await transcriptQueue.flush(),
           callbacks,
-          inputDeviceId: this.localOptions.inputDeviceId,
+          input,
           videoDeviceId: this.localOptions.videoDeviceId,
           consultThinkingLevel: session.consultThinkingLevel,
           consultFastMode: session.consultFastMode,
         });
-        this.pendingTransport = nextTransport;
+        this.pendingStartup = nextTransport;
         this.callbacks.onVideoCapability?.(
           providerVideoCapable && typeof nextTransport.setVideoEnabled === "function",
         );
-        startResult = await nextTransport.start();
+        startResult =
+          this.pendingStartup === nextTransport ? await nextTransport.start() : "cancelled";
       } catch (error) {
-        if (this.pendingTransport === nextTransport) {
-          this.pendingTransport = null;
+        if (this.pendingStartup === nextTransport) {
+          this.pendingStartup = null;
         }
         retireUncommittedRealtimeTalkTransport({
           nextTransport,
@@ -267,8 +256,8 @@ export class RealtimeTalkSession {
         ownerTransferred = true;
         throw error;
       }
-      if (this.pendingTransport === nextTransport) {
-        this.pendingTransport = null;
+      if (this.pendingStartup === nextTransport) {
+        this.pendingStartup = null;
       }
       if (
         startResult === "cancelled" ||
@@ -298,7 +287,7 @@ export class RealtimeTalkSession {
         this.clientVoiceSessionOwner = adoptedOwner;
       }
       try {
-        // Publish the candidate before releasing bounded events buffered during permission.
+        // Publish the candidate before releasing bounded events buffered during startup.
         nextTransport.activate?.();
       } catch (error) {
         const canRestoreExistingTransport =
@@ -333,6 +322,10 @@ export class RealtimeTalkSession {
       ownerTransferred = true;
       existingTransport?.stop({ emitClosed: false });
     } finally {
+      if (input && this.pendingStartup === input) {
+        this.pendingStartup = null;
+        input.stop();
+      }
       if (!ownerTransferred) {
         owner.release();
       }
@@ -421,7 +414,7 @@ export class RealtimeTalkSession {
           }),
           { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
         );
-        return resolveTransport(relaySession) === "gateway-relay"
+        return resolveRealtimeTalkTransport(relaySession) === "gateway-relay"
           ? {
               ...relaySession,
               voiceSessionId: (relaySession as RealtimeTalkGatewayRelaySessionResult)
@@ -435,25 +428,39 @@ export class RealtimeTalkSession {
   }
 
   stop(): void {
+    try {
+      this.retireTransport();
+    } finally {
+      this.callbacks.onStatus?.("idle");
+    }
+  }
+
+  private retireTransport(): void {
     this.lifecycleGeneration += 1;
     this.closed = true;
     this.videoOperation += 1;
     this.videoEnabled = false;
     activeRealtimeTalkSessions.delete(this);
-    this.callbacks.onStatus?.("idle");
-    this.stopPendingTransport();
     const detached = this.detachVoiceSession();
-    this.transport?.stop();
+    const transport = this.transport;
     this.transport = null;
-    if (detached) {
-      this.closeLogicalVoiceSession(detached);
+    try {
+      this.stopPendingStartup();
+    } finally {
+      try {
+        transport?.stop();
+      } finally {
+        if (detached) {
+          this.closeLogicalVoiceSession(detached);
+        }
+      }
     }
   }
 
-  private stopPendingTransport(): void {
-    const pendingTransport = this.pendingTransport;
-    this.pendingTransport = null;
-    pendingTransport?.stop({ emitClosed: false });
+  private stopPendingStartup(): void {
+    const pending = this.pendingStartup;
+    this.pendingStartup = null;
+    pending?.stop({ emitClosed: false });
   }
 
   private closeUnadoptedVoiceSession(
@@ -491,6 +498,22 @@ export class RealtimeTalkSession {
   ): RealtimeTalkCallbacks {
     return {
       ...this.callbacks,
+      onTalkEvent: (event) => {
+        try {
+          // A transport's terminal event owns cleanup, even while its error stays
+          // visible. Retired transports cannot close a replacement using the same id.
+          if (
+            event.type === "session.closed" &&
+            this.transportGeneration === owningGeneration &&
+            this.voiceSessionId === owningVoiceSessionId &&
+            this.acceptingTranscripts
+          ) {
+            this.retireTransport();
+          }
+        } finally {
+          this.callbacks.onTalkEvent?.(event);
+        }
+      },
       onTranscript: (entry) => {
         // Transport replacement can reuse the voice session id, so a retired
         // transport's late finals are fenced by generation, not id alone.
@@ -558,23 +581,12 @@ export class RealtimeTalkSession {
     ) {
       return;
     }
-    this.lifecycleGeneration += 1;
-    this.closed = true;
-    this.videoOperation += 1;
-    this.videoEnabled = false;
-    activeRealtimeTalkSessions.delete(this);
-    this.stopPendingTransport();
-    const detached = this.detachVoiceSession();
+    this.retireTransport();
     // Retire the overflowing transport before accepted-write and close failures
     // settle so the first terminal persistence error keeps precedence.
     this.transportGeneration += 1;
-    this.transport?.stop();
-    this.transport = null;
     console.warn(VOICE_TRANSCRIPT_QUEUE_POLICY.overflowMessage);
     this.callbacks.onStatus?.("error", VOICE_TRANSCRIPT_QUEUE_POLICY.overflowMessage);
-    if (detached) {
-      this.closeLogicalVoiceSession(detached);
-    }
   }
 
   private async writeTranscriptWithRetry(params: {
@@ -584,16 +596,10 @@ export class RealtimeTalkSession {
     text: string;
     signal: AbortSignal;
   }): Promise<void> {
-    const retryDelaysMs = [0, 500, 2_000];
-    let lastError: unknown;
-    for (const delayMs of retryDelaysMs) {
-      if (delayMs > 0) {
-        await waitForTranscriptRetry(delayMs, params.signal);
-      } else if (params.signal.aborted) {
-        throw transcriptPersistenceAbortError();
-      }
-      try {
-        await this.client.request(
+    await retryVoiceTranscriptPersistence(
+      params.signal,
+      () =>
+        this.client.request(
           "talk.client.transcript",
           {
             sessionKey: this.sessionKey,
@@ -607,16 +613,9 @@ export class RealtimeTalkSession {
             signal: params.signal,
             timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
           },
-        );
-        return;
-      } catch (error) {
-        if (params.signal.aborted) {
-          throw transcriptPersistenceAbortError();
-        }
-        lastError = error;
-      }
-    }
-    throw transcriptWriteError(lastError, "voice transcript save failed");
+        ),
+      "voice transcript save failed",
+    );
   }
 
   private detachVoiceSession(): DetachedVoiceSession | undefined {
@@ -650,16 +649,11 @@ export class RealtimeTalkSession {
     owner.beginDrain();
     void detached.transcriptQueue
       .flush()
-      .then(async () => {
-        let lastError: unknown;
-        for (const delayMs of [0, 500, 2_000]) {
-          if (delayMs > 0) {
-            await waitForTranscriptRetry(delayMs, owner.closeSignal);
-          } else if (owner.closeSignal.aborted) {
-            throw transcriptPersistenceAbortError();
-          }
-          try {
-            await this.client.request(
+      .then(() =>
+        retryVoiceTranscriptPersistence(
+          owner.closeSignal,
+          () =>
+            this.client.request(
               "talk.client.close",
               {
                 sessionKey: this.sessionKey,
@@ -669,17 +663,10 @@ export class RealtimeTalkSession {
                 signal: owner.closeSignal,
                 timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
               },
-            );
-            return;
-          } catch (error) {
-            if (owner.closeSignal.aborted) {
-              throw transcriptPersistenceAbortError();
-            }
-            lastError = error;
-          }
-        }
-        throw transcriptWriteError(lastError, "Realtime Talk voice session close failed");
-      })
+            ),
+          "Realtime Talk voice session close failed",
+        ),
+      )
       .catch((error: unknown) => {
         if (owner.closeSignal.aborted) {
           return;

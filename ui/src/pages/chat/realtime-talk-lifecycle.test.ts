@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
+import { useRealtimeTalkMicrophoneFixture } from "./realtime-talk-input.test-support.ts";
 import type { RealtimeTalkTransportContext } from "./realtime-talk-shared.ts";
 
 const transportMock = vi.hoisted(() => ({
@@ -61,6 +62,8 @@ function transcriptContext(contexts: RealtimeTalkTransportContext[], index = 0):
   }
   return context as TranscriptContext;
 }
+
+useRealtimeTalkMicrophoneFixture();
 
 describe("RealtimeTalkSession lifecycle", () => {
   beforeEach(() => {
@@ -520,7 +523,7 @@ describe("RealtimeTalkSession lifecycle", () => {
 
     await expect(session.start()).rejects.toThrow("Realtime connection closed");
 
-    expect(onStatus).toHaveBeenCalledWith("connecting");
+    expect(onStatus).toHaveBeenCalledWith("connecting", "Preparing voice session...");
     expect(transportMock.webRtcStops[0]).toHaveBeenCalledWith({ emitClosed: false });
   });
 
