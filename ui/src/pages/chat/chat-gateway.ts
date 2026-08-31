@@ -6,18 +6,18 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import { accumulatedStreamText } from "../../lib/chat/chat-types.ts";
 import { isAssistantHeartbeatAckForDisplay } from "../../lib/chat/heartbeat-display.ts";
 import { extractText } from "../../lib/chat/message-extract.ts";
-// Control UI page module reconciles Chat Gateway events into Chat state.
-import { isUiGlobalSessionKey, resolveUiDefaultAgentId } from "../../lib/sessions/session-key.ts";
 import {
-  chatScopedEventSessionMatches,
   isHiddenAssistantStreamText,
   isSilentReplyStream,
-  materializeVisibleAssistantStreamMessages,
   shouldHideAssistantChatMessage,
-  type ChatEventPayload,
-  type ChatState,
-} from "./chat-history.ts";
+} from "../../lib/chat/message-visibility.ts";
+// Control UI page module reconciles Chat Gateway events into Chat state.
+import { isUiGlobalSessionKey, resolveUiDefaultAgentId } from "../../lib/sessions/session-key.ts";
+import { chatScopedEventSessionMatches } from "./chat-history-state.ts";
+import { materializeVisibleAssistantStreamMessages } from "./chat-history-stream.ts";
+import type { ChatEventPayload } from "./chat-history.ts";
 import { reconcileChatRunStartup } from "./chat-run-startup.ts";
+import type { ChatState } from "./chat-state-contract.ts";
 import { transcriptRunId } from "./chat-thread-run-identity.ts";
 import {
   getChatSessionProjection,
@@ -145,12 +145,9 @@ function normalizeFinalAssistantMessage(message: unknown): Record<string, unknow
     : assistant;
 }
 
-function stripChatErrorMarker(text: string): string {
-  return text.replace(/^⚠️\s*/u, "");
-}
-
 function normalizeChatErrorComparisonText(text: string): string {
-  return stripChatErrorMarker(text)
+  return text
+    .replace(/^⚠️\s*/u, "")
     .replace(/^Error:\s*/iu, "")
     .replace(/\s+/gu, " ")
     .trim();
@@ -163,11 +160,11 @@ function resolveGatewayErrorText(
   const errorText = payload.errorMessage?.trim();
   if (errorText) {
     return errorText.startsWith("⚠️") || errorText.startsWith("Error:")
-      ? stripChatErrorMarker(errorText)
+      ? errorText
       : `Error: ${errorText}`;
   }
   const messageText = message ? extractText(message)?.trim() : null;
-  return messageText ? stripChatErrorMarker(messageText) : "chat error";
+  return messageText || "chat error";
 }
 
 function payloadMessageIsErrorProjection(

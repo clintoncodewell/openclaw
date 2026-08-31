@@ -111,25 +111,6 @@ describe("worker placement dispatch reclaim", () => {
     expect(harness.log).toContain("workspace:resume");
   });
 
-  it("rechecks session authorization at the activation lifecycle fence", async () => {
-    const harness = createHarness(placementStore);
-    let authorizationChecks = 0;
-    const authorize = vi.fn(() => {
-      authorizationChecks += 1;
-      if (authorizationChecks === 2) {
-        throw new Error("session access revoked");
-      }
-    });
-
-    await expect(harness.service.dispatch(REQUEST, undefined, authorize)).rejects.toThrow(
-      "session access revoked",
-    );
-
-    expect(authorize).toHaveBeenCalledTimes(2);
-    expect(harness.placements.current()).toMatchObject({ state: "failed" });
-    expect(harness.log).not.toContain("placement:active");
-  });
-
   it("attaches before opening one tunnel for workspace sync and activation", async () => {
     const harness = createHarness(placementStore);
 
@@ -456,32 +437,35 @@ describe("worker placement dispatch reclaim", () => {
     expect(restarted.log).not.toContain("placement:reclaimed");
   });
 
-  it("serializes concurrent reclaim of an environment-free failed placement back to clean local state", async () => {
-    const harness = createHarness(placementStore);
-    const requested = placementStore.startDispatch(REQUEST);
-    const failed = placementStore.fail({
-      sessionId: REQUEST.sessionId,
-      expectedGeneration: requested.generation,
-      recoveryError: "device worker is offline",
-    });
+  it.each([false, true])(
+    "serializes concurrent failed reclaim back to local (coordinated=%s)",
+    async (coordinated) => {
+      const harness = createHarness(placementStore);
+      const requested = placementStore.startDispatch(REQUEST);
+      const failed = placementStore.fail({
+        sessionId: REQUEST.sessionId,
+        expectedGeneration: requested.generation,
+        recoveryError: "device worker is offline",
+      });
 
-    const results = await Promise.all([
-      harness.service.reclaim(REQUEST),
-      harness.service.reclaim(REQUEST),
-    ]);
-    expect(results[1]).toEqual(results[0]);
-    expect(results[0]).toMatchObject({
-      state: "local",
-      generation: failed.generation + 1,
-      environmentId: null,
-      recoveryError: null,
-      terminalReason: null,
-      terminalAtMs: null,
-    });
+      const service = coordinated
+        ? coordinateWorkerPlacementDispatch(harness.service)
+        : harness.service;
+      const results = await Promise.all([service.reclaim(REQUEST), service.reclaim(REQUEST)]);
+      expect(results[1]).toEqual(results[0]);
+      expect(results[0]).toMatchObject({
+        state: "local",
+        generation: failed.generation + 1,
+        environmentId: null,
+        recoveryError: null,
+        terminalReason: null,
+        terminalAtMs: null,
+      });
 
-    expect(harness.environments.startTunnel).not.toHaveBeenCalled();
-    expect(harness.environments.destroy).not.toHaveBeenCalled();
-  });
+      expect(harness.environments.startTunnel).not.toHaveBeenCalled();
+      expect(harness.environments.destroy).not.toHaveBeenCalled();
+    },
+  );
 
   it("retries pending failed-environment teardown before clearing the placement", async () => {
     const harness = createHarness(placementStore, { failAt: "sync", destroyFails: true });

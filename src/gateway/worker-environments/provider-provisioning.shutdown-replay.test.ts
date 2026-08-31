@@ -107,6 +107,7 @@ describe("worker node provisioning shutdown replay", () => {
       getConfig: () => support.testState.config,
       resolveAvailability: unavailable,
       prepareArtifact,
+      prepareBundle: async () => support.BUNDLE_ARTIFACT,
       transfer: firstTransfer,
     });
     const receipt = {
@@ -137,6 +138,7 @@ describe("worker node provisioning shutdown replay", () => {
         runActivationBarrier: async ({ activate }) => activate(),
         runMoveBarrier: async ({ begin }) => begin(),
         resolveMoveDestination: async () => undefined,
+        runReclaimPreparation: async ({ run, authorize }) => await run(authorize),
         runReclaimBarrier: async ({ begin, reclaim }) =>
           await reclaim("/gateway/workspace", begin()),
         runFailedReclaimBarrier: async ({ reclaim }) => await reclaim(),
@@ -204,6 +206,7 @@ describe("worker node provisioning shutdown replay", () => {
       getConfig: () => support.testState.config,
       resolveAvailability: async () => ({ available: true }),
       prepareArtifact,
+      prepareBundle: async () => support.BUNDLE_ARTIFACT,
       transfer: restartedTransfer,
     });
     const syncWorkspace = vi.fn(async () => ({

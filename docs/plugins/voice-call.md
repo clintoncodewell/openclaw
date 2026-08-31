@@ -220,10 +220,11 @@ that Region. See
 
   </Accordion>
   <Accordion title="Legacy config migrations">
-    Config parsing normalizes these legacy keys automatically and logs a
-    warning naming the replacement path; the shim is removed in a future
-    release (`2026.6.0`), so run `openclaw doctor --fix` to rewrite committed
-    config to the canonical shape:
+    Run `openclaw doctor --fix` to rewrite these legacy keys to the canonical
+    shape. The Voice Call plugin owns the migration; runtime config parsing
+    accepts only the current keys. When both old and current settings exist,
+    Doctor keeps the current setting, removes the legacy key, and reports which
+    destination it retained. Legacy values fill only missing current fields:
 
     - `provider: "log"` → `provider: "mock"`
     - `twilio.from` → `fromNumber`
@@ -246,16 +247,16 @@ booking, IVR, or Google Meet bridge flows where the same phone number may
 represent different meetings.
 
 Set `sessionScope: "main"` to route every call into the configured agent's main
-session. This honors the core `session.mainKey` setting and resolves to
-`global` when core `session.scope` is `"global"`. Raw call turns then share
-history with the agent's primary session, so use this only when that shared
-context is intentional.
+session, `agent:<agentId>:main`, or `global` when core `session.scope` is
+`"global"`. Custom core `session.mainKey` values are ignored. Raw call turns
+then share history with the agent's primary session, so use this only when
+that shared context is intentional.
 
 For `per-phone` and `per-call`, Voice Call stores generated session keys under
 the configured agent namespace (`agent:<agentId>:voice:*`). Raw explicit
 integration keys resolve into the same namespace: a canonical
 `agent:<configuredAgentId>:*` key keeps that owner and honors core
-`session.mainKey`/global-scope aliasing; foreign or malformed `agent:*` input
+main-session/global-scope aliasing; foreign or malformed `agent:*` input
 is scoped as an opaque key under the configured agent; `global` and `unknown`
 remain global sentinels.
 
@@ -273,7 +274,7 @@ audio mode per call.
 Current runtime behavior:
 
 - `realtime.enabled` is supported for Twilio and Telnyx.
-- `realtime.provider` is optional. If unset, Voice Call uses the first registered realtime voice provider.
+- `realtime.provider` is optional. If unset, Voice Call selects the first configured realtime voice provider in provider priority order. Providers named in `realtime.providers` are discovered even when another provider is already active; plugin disablement and allow/deny rules still apply.
 - Bundled realtime voice providers: Google Gemini Live (`google`) and OpenAI (`openai`), registered by their provider plugins.
 - Provider-owned raw config lives under `realtime.providers.<providerId>`.
 - Voice Call exposes the built-in `openclaw_end_call` realtime tool on every call. It takes no arguments or call ID; the active voice bridge binds it to the current call.
@@ -455,7 +456,7 @@ authenticated `realtime.enabled` path instead.
 
 Current runtime behavior:
 
-- `streaming.provider` is optional. If unset, Voice Call uses the first registered realtime transcription provider.
+- `streaming.provider` is optional. If unset, Voice Call selects the first configured realtime transcription provider in provider priority order. Providers named in `streaming.providers` are discovered even when another provider is already active; plugin disablement and allow/deny rules still apply.
 - Bundled realtime transcription providers: Deepgram (`deepgram`), ElevenLabs (`elevenlabs`), Mistral (`mistral`), OpenAI (`openai`), and xAI (`xai`), registered by their provider plugins.
 - Provider-owned raw config lives under `streaming.providers.<providerId>`.
 - After Twilio sends an accepted stream `start` message, Voice Call registers the stream immediately, queues inbound media through the transcription provider while the provider connects, and starts the initial greeting only after realtime transcription is ready.

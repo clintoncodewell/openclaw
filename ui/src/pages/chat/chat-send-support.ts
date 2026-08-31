@@ -3,6 +3,10 @@ import type { SessionsListResult } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
 import type { ChatAttachment, ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import { sameQueuedDeliveryVersion } from "../../lib/chat/outbox-store-codec.ts";
+import {
+  storedChatOutboxScopeKey,
+  type StoredChatOutboxScope,
+} from "../../lib/chat/outbox-store.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { resolveSessionDisplayName } from "../../lib/session-display.ts";
 import { visibleSessionMatches } from "../../lib/sessions/index.ts";
@@ -13,16 +17,16 @@ import {
 } from "../../lib/sessions/session-key.ts";
 import { showToast } from "../../lib/toast.ts";
 import { getChatAttachmentDataUrl } from "./attachment-payload-store.ts";
+import type { ChatHistoryResult } from "./chat-history-snapshot.ts";
 import {
   readDeliveredQueuedChatSendForRun,
   readQueuedMessageById,
   removeDeliveredQueuedChatSendForRun,
-  updateQueuedMessageForSession,
+  updateQueuedMessage,
 } from "./chat-queue.ts";
 import type { TerminalFailureChatSendAck } from "./chat-send-ack.ts";
 import type { ChatHost } from "./chat-send-contract.ts";
 import type { ChatState } from "./chat-state-contract.ts";
-import { storedChatOutboxScopeKey, type StoredChatOutboxScope } from "./composer-persistence.ts";
 import { readChatSessionProjectionScope, reduceChatSessionProjection } from "./history-merge.ts";
 import {
   captureOutboxPayloadOwner,
@@ -65,23 +69,28 @@ export function formatTerminalChatSendAckError(
       : "The run ended before the message was accepted.";
 }
 
-export function chatMessagesContainQueuedSend(
-  messages: unknown,
-  item: ChatQueueItem,
-  userRoleOnly = false,
-): boolean {
-  return findQueuedSendMessageIndex(messages, item, userRoleOnly) >= 0;
+export function readChatInputReceipt(
+  history: ChatHistoryResult,
+  item: Pick<ChatQueueItem, "sendRunId" | "sessionId">,
+): "pending" | "consumed" | undefined {
+  if (
+    !item.sendRunId ||
+    (item.sessionId && item.sessionId !== (history.sessionInfo?.sessionId ?? history.sessionId))
+  ) {
+    return undefined;
+  }
+  return history.inputReceipts?.find((input) => input.runId === item.sendRunId)?.state;
 }
 
-function findQueuedSendMessageIndex(
+export function chatMessagesContainQueuedSend(
   messages: unknown,
-  item: ChatQueueItem,
+  item: Pick<ChatQueueItem, "sendRunId">,
   userRoleOnly = false,
-): number {
+): boolean {
   if (!item.sendRunId) {
-    return -1;
+    return false;
   }
-  return (Array.isArray(messages) ? messages : []).findIndex((message) => {
+  return (Array.isArray(messages) ? messages : []).some((message) => {
     if (!isRecord(message)) {
       return false;
     }
@@ -257,12 +266,8 @@ export function retireDeliveredQueuedUserTurn(
     const reason = result.status === "failed" ? result.reason : "missing";
     // Delivery proof must never become a fresh-send retry because local bytes
     // were unavailable. Keep the same run identity and its no-replay barrier.
-    updateQueuedMessageForSession(
-      host,
-      scope.sessionKey,
-      stored.id,
-      (item) => failOutboxPayload({ ...item, sendState: "unconfirmed" }, reason),
-      scope.agentId,
+    updateQueuedMessage(host, stored.id, (item) =>
+      failOutboxPayload({ ...item, sendState: "unconfirmed" }, reason),
     );
     return "retained";
   });

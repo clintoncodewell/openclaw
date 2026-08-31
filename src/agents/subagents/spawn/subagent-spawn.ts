@@ -263,7 +263,7 @@ export async function spawnSubagentDirect(
         agentId: targetAgentId,
         label: label || undefined,
         mode: spawnMode,
-        requesterSessionKey: ownership.threadBindingRequesterSessionKey,
+        requesterSessionKey: ownership.controllerSessionKey,
         requester: {
           channel: childSessionOrigin?.channel,
           accountId: childSessionOrigin?.accountId,
@@ -639,7 +639,7 @@ export async function spawnSubagentDirect(
               throw error;
             }
             await emitSpawnLifecycleHooks(gatewayRunId);
-          });
+          }, "subagents:spawn");
         },
         onStartFailure: async (error) => {
           if (error instanceof GatewayDrainingError) {

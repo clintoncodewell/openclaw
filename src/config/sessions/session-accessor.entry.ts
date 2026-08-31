@@ -261,8 +261,16 @@ function resolveSessionEntryStoreTarget(
   scope: LogicalSessionAccessScope,
 ): ResolvedSessionEntryStoreTarget {
   const requestedKey = scope.sessionKey.trim();
-  const canonicalKey = resolveSessionStoreKey({ cfg: scope.cfg, sessionKey: requestedKey });
-  const agentId = resolveSessionStoreAgentId(scope.cfg, canonicalKey);
+  // Scoped aliases can become global, so validate both the requested and fixed-store owners.
+  const requestedAgentId = scope.agentId
+    ? resolveSessionStoreAgentId(scope.cfg, requestedKey, scope.agentId)
+    : undefined;
+  const canonicalKey = resolveSessionStoreKey({
+    cfg: scope.cfg,
+    sessionKey: requestedKey,
+    storeAgentId: requestedAgentId,
+  });
+  const agentId = resolveSessionStoreAgentId(scope.cfg, canonicalKey, requestedAgentId);
   const scanTargets = buildLogicalSessionEntryCandidateKeys({
     agentId,
     canonicalKey,
@@ -349,7 +357,7 @@ export async function updateResolvedSessionEntry<T>(
   }
   let updateResult: T | undefined;
   const updated = await patchSessionEntryCore(
-    { sessionKey: target.storeKey, storePath: target.storePath },
+    { agentId: target.agentId, sessionKey: target.storeKey, storePath: target.storePath },
     async (entry) => {
       const context: ResolvedSessionEntryUpdateContext = {
         agentId: target.agentId,
@@ -388,7 +396,7 @@ export function listSessionEntriesCore(scope: SessionEntryListScope = {}): Sessi
 
 /**
  * Synchronous read view: `get` queries one exact persisted key without alias resolution;
- * `entries` reuses a validated store snapshot. List rows and their nested values are
+ * `entries` caches listing metadata or loads complete entries. Rows and nested values are
  * borrowed: callers must not mutate them and must drop the view before any await.
  */
 export function openSessionEntryReadView(
