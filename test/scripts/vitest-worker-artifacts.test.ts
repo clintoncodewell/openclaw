@@ -576,18 +576,20 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
       expect(fs.existsSync(owner.descriptor.directory)).toBe(false);
     }));
 
-  it("preserves scoped and prepared provider hooks in source and compiled TUI payloads", ({
-    workerArtifacts,
-  }) =>
-    workerArtifacts.fixtureLifetime.run(async () => {
-      const { node, prepareWorkers } = workerArtifacts.createFixtureCommands();
-      const owner = createVitestWorkerRun();
-      try {
-        const manifest = await prepareWorkers(owner);
-        console.log(
-          JSON.stringify({ preparationMs: manifest.durationMs, identity: manifest.identity }),
-        );
-        for (const mode of ["source", "compiled"] as const) {
+  it.for(["source", "compiled"] as const)(
+    "preserves scoped and prepared provider hooks in %s TUI payloads",
+    (mode, { workerArtifacts }) =>
+      workerArtifacts.fixtureLifetime.run(async () => {
+        const { node, prepareWorkers } = workerArtifacts.createFixtureCommands();
+        // Each mode owns its cold-process budget; source probes need no compiled generation.
+        const owner = mode === "compiled" ? createVitestWorkerRun() : undefined;
+        try {
+          if (owner) {
+            const manifest = await prepareWorkers(owner);
+            console.log(
+              JSON.stringify({ preparationMs: manifest.durationMs, identity: manifest.identity }),
+            );
+          }
           for (const scope of ["scoped", "prepared"] as const) {
             const directory = workerArtifacts.fixtureDirectory();
             const events = path.join(directory, "provider-events.jsonl");
@@ -629,6 +631,9 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
             import {createEmptyPluginRegistry} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/registry-empty.ts")).href)};
             import {getPluginRegistryState} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/runtime-state.ts")).href)};
             import {withPluginRuntimeRegistryScope} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/runtime/gateway-request-scope.ts")).href)};
+            import {clearActivePluginRegistry,setActivePluginRegistry} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/runtime.ts")).href)};
+            import {withPluginRuntimeGenerationScope} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/runtime/generation-scope.ts")).href)};
+            import {createPluginMetadataSnapshot} from ${JSON.stringify(pathToFileURL(path.join(root, "src/config/plugin-auto-enable.test-helpers.ts")).href)};
             const events = ${JSON.stringify(events)};
             const observed = () => fs.existsSync(events) ? fs.readFileSync(events,'utf8').trim().split('\\n').map(line=>JSON.parse(line)) : [];
             const started = performance.now();
@@ -646,11 +651,11 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
             registry.providers.push({pluginId:'fixture-hook',provider:{id:'fixture-provider',label:'Fixture',auth:[],
               classifyFailoverReason(context) {
                 assert.equal(context.provider,'fixture-provider');assert.equal(context.status,403);
-                scopedCalls++;return 'overloaded';
+                scopedCalls++;return ${JSON.stringify(scope === "prepared" ? "billing" : "overloaded")};
               },
             }});
             const unprepared = buildEmbeddedRunPayloads(input('403 fixture refusal'));
-            assert.ok(unprepared.some(payload=>payload.isError), 'an unprepared error still needs a visible outcome');
+            assert.deepEqual(unprepared,[{text:'⚠️ fixture-provider/fixture-model request failed (authentication failed, HTTP 403). Re-authenticate the provider and try again.',isError:true}], 'an unprepared error must retain safe provider, model and status facts');
             assert.deepEqual(observed(),[], 'error formatting must not materialize the provider');
             const providerOwner = ${scope === "prepared" ? "resolveProviderRuntimePluginHandle({provider:'fixture-provider'}).plugin" : "undefined"};
             if (${scope === "prepared"}) {
@@ -658,14 +663,17 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
               assert.deepEqual(observed(),[{event:'import'},{event:'register',mode:'discovery'}]);
             }
             const callStarted = performance.now();
+            const render = providerOwner => buildEmbeddedRunPayloads({...input('403 fixture refusal'),providerOwner});
+            const prepare = () => resolveProviderRuntimePluginHandle({provider:'fixture-provider'}).plugin;
             const call = () => {
-              const activeProviderOwner = ${scope === "scoped" ? "resolveProviderRuntimePluginHandle({provider:'fixture-provider'}).plugin" : "providerOwner"};
+              const activeProviderOwner = ${scope === "scoped" ? "prepare()" : "providerOwner"};
               if (${scope === "scoped"}) {
                 assert.equal(activeProviderOwner?.classifyFailoverReason,registry.providers[0].provider.classifyFailoverReason,'preparation must retain the scoped provider hook identity');
               }
-              return buildEmbeddedRunPayloads({...input('403 fixture refusal'),providerOwner:activeProviderOwner});
+              assert.deepEqual(render(),unprepared,'ownerless presentation must ignore loaded provider policy');
+              return render(activeProviderOwner);
             };
-            const payloads = ${scope === "scoped" ? "withPluginRuntimeRegistryScope(registry,call)" : "call()"};
+            const payloads = withPluginRuntimeRegistryScope(registry,call);
             const callMs = performance.now()-callStarted;
             const records = observed();
             if (${scope === "scoped"}) {
@@ -679,28 +687,48 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
             }
             assert.ok(payloads.some(payload=>payload.isError && payload.text.includes('temporarily overloaded')));
             assert.equal(getPluginRegistryState()?.activeRegistry ?? null,null,'preparation and error handling must not install a global registry');
+            if (${scope === "scoped"}) {
+              const config = {};
+              const metadataSnapshot = createPluginMetadataSnapshot({config,manifestRegistry:{plugins:[],diagnostics:[]}});
+              setActivePluginRegistry(registry,'fixture-active');
+              try {
+                assert.deepEqual(call(),payloads,'preparation must select the active loaded provider');
+                withPluginRuntimeGenerationScope({metadataSnapshot,pluginRegistry:registry},()=>{
+                  assert.deepEqual(call(),payloads,'preparation must select the generation provider');
+                  const callsBeforeEmptyGeneration = scopedCalls;
+                  withPluginRuntimeGenerationScope({metadataSnapshot},()=>{
+                    withPluginRuntimeRegistryScope(registry,()=>{
+                      const absentOwner = prepare();
+                      assert.equal(absentOwner,undefined,'an empty generation must fence request and active providers');
+                      assert.deepEqual(render(absentOwner),unprepared);
+                      assert.equal(scopedCalls,callsBeforeEmptyGeneration);
+                    });
+                  });
+                  assert.deepEqual(call(),payloads,'the outer generation must be restored');
+                });
+              } finally {await clearActivePluginRegistry();}
+              assert.deepEqual(render(),unprepared,'presentation outside the scope still needs an explicit owner');
+              assert.deepEqual(observed(),[],'loaded lookups must not import the fixture plugin');
+            }
             console.log(JSON.stringify({pid:process.pid,mode:${JSON.stringify(mode)},scope:${JSON.stringify(scope)},importMs:imported-started,callMs,scopedCalls,records,payloads,rss:process.memoryUsage().rss}));
           `,
             );
             const url = pathToFileURL(
-              mode === "source"
-                ? path.join(root, "src/agents/embedded-agent-runner/run/payloads.ts")
-                : path.join(
+              owner
+                ? path.join(
                     owner.descriptor.directory,
                     "dist/agents/embedded-agent-runner/run/payloads.js",
-                  ),
+                  )
+                : path.join(root, "src/agents/embedded-agent-runner/run/payloads.ts"),
             );
             const result = await node(
               [
                 ...resolveRuntimeWorkerArgv(pathToFileURL(probe)),
                 url.href,
                 pathToFileURL(
-                  mode === "source"
-                    ? path.join(root, "src/plugins/provider-hook-runtime.ts")
-                    : path.join(
-                        owner.descriptor.directory,
-                        "dist/plugins/provider-hook-runtime.js",
-                      ),
+                  owner
+                    ? path.join(owner.descriptor.directory, "dist/plugins/provider-hook-runtime.js")
+                    : path.join(root, "src/plugins/provider-hook-runtime.ts"),
                 ).href,
               ],
               root,
@@ -713,12 +741,14 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
             console.log(result.stdout);
             expect(result.code, result.stderr + result.stdout).toBe(0);
           }
+        } finally {
+          await owner?.dispose();
         }
-      } finally {
-        await owner.dispose();
-      }
-      expect(fs.existsSync(owner.descriptor.directory)).toBe(false);
-    }));
+        if (owner) {
+          expect(fs.existsSync(owner.descriptor.directory)).toBe(false);
+        }
+      }),
+  );
 
   it.each([
     { args: ["run", "--", "--help"], metadata: false },
@@ -858,7 +888,7 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
           ]).result;
           expect(refused.code).not.toBe(0);
           expect(refused.stderr).toContain("ENOENT");
-          expect(refused.stderr.trim().split("\n").at(-1)).toBe("[test] FAILED (exit 1)");
+          expect(refused.stderr).not.toContain("FAILED (exit");
           expect(
             fs.readFileSync(path.join(directory, "generations.jsonl"), "utf8").trim().split("\n"),
           ).toHaveLength(1);
@@ -909,7 +939,7 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
           expect(result.code).not.toBe(0);
           if (action === "owner disconnect") {
             expect(result.stderr).toContain("owner disconnected");
-            expect(result.stderr.trim().split("\n").at(-1)).toBe("[test] FAILED (exit 1)");
+            expect(result.stderr).not.toContain("FAILED (exit");
           }
           await owner.dispose();
           expect(fs.existsSync(new URL(generation))).toBe(false);
@@ -1032,6 +1062,9 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain("Compiled subprocess artifact changed");
       expect(result.stderr).not.toContain("[test] passed");
+      expect(result.stderr.match(/^\[.*\] FAILED \(exit \d+\)$/gmu)).toEqual([
+        "[test] FAILED (exit 1)",
+      ]);
       expect(result.stderr.trim().split("\n").at(-1)).toBe("[test] FAILED (exit 1)");
     }));
 
@@ -1260,6 +1293,9 @@ describe.concurrent("fresh compiled subprocess invocation", () => {
           expect(failed.code).not.toBe(0);
           expect(failed.stderr).toContain("owner refused:");
           expect(failed.stderr).toContain(error!);
+          expect(failed.stderr.match(/^\[.*\] FAILED \(exit \d+\)$/gmu)).toEqual([
+            "[test] FAILED (exit 1)",
+          ]);
           expect(failed.stderr.trim().split("\n").at(-1)).toBe("[test] FAILED (exit 1)");
           expect(fs.readdirSync(parent).toSorted()).toEqual(before);
         }

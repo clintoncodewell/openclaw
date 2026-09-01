@@ -25,6 +25,7 @@ import {
   TSDOWN_UNIFIED_CONFIG_GROUP,
   TSDOWN_UNIFIED_DTS_CONFIG_GROUPS,
 } from "./scripts/lib/tsdown-config-groups.mts";
+import { createDeclarationInputCapture } from "./scripts/lib/tsdown-declaration-inputs.mts";
 import { tsdownPackageOutputRoot } from "./scripts/lib/tsdown-output-roots.mts";
 import { runtimeProcessDeclarationEntries } from "./scripts/lib/vitest-worker-artifacts.mts";
 import {
@@ -294,7 +295,6 @@ const rootDependencyOptions = withExternalPackageSubpaths({
     "@anthropic-ai/claude-agent-sdk",
     "@anthropic-ai/vertex-sdk",
     "@discordjs/voice",
-    "@lancedb/lancedb",
     "@larksuiteoapi/node-sdk",
     "@matrix-org/matrix-sdk-crypto-nodejs",
     "@openclaw/ai",
@@ -304,9 +304,12 @@ const rootDependencyOptions = withExternalPackageSubpaths({
     "jimp",
     "matrix-js-sdk",
     "prism-media",
-    "sharp",
     "typescript",
     "vitest",
+    // Selected plugin distributions install platform optionals beside bundled JavaScript.
+    ...bundledPluginBuildEntries.flatMap(({ packageJson }) =>
+      Object.keys(packageJson?.optionalDependencies ?? {}),
+    ),
   ],
 });
 
@@ -315,7 +318,11 @@ function shouldNeverBundleDependency(id: string): boolean {
 }
 
 function shouldNeverBundleDeclarationDependency(id: string): boolean {
-  return shouldNeverBundleDependency(id) || id === "zod" || id.startsWith("zod/");
+  // Arrow's relative module augmentations must stay beside their package modules.
+  return (
+    shouldNeverBundleDependency(id) ||
+    ["zod", "apache-arrow"].some((name) => id === name || id.startsWith(`${name}/`))
+  );
 }
 
 function shouldAlwaysBundleDependency(id: string): boolean {
@@ -689,7 +696,11 @@ function buildUnifiedDeclarationPartitions(
     }
     return {
       name,
-      sources: partition.map(([, source]) => normalizeDeclarationEntrySource(source)),
+      // The compiler's TypeScript-only policy leaves JavaScript runtime assets
+      // without declarations; they remain in the unified runtime entry graph.
+      sources: partition
+        .filter(([, source]) => /\.[cm]?tsx?$/u.test(source))
+        .map(([, source]) => normalizeDeclarationEntrySource(source)),
     };
   });
 }
@@ -781,6 +792,7 @@ const configs = [
             name,
             entry: unifiedDistEntries,
             deps: unifiedDeps,
+            hooks: { "build:done": createDeclarationInputCapture(name) },
           },
           { emitDtsOnly: true, entry: sources },
         ),

@@ -15,6 +15,7 @@ import type {
   TranscriptEvent,
 } from "./session-accessor.sqlite-contract.js";
 import {
+  iterateVisibleMessageRange,
   readTranscriptProjectionGeneration,
   readVisibleMessageMetadata,
   readVisibleMessageRange,
@@ -98,6 +99,20 @@ export function readSessionTranscriptMessageEvents(
   return withCurrentProjectionSnapshot(scope, (projection) => {
     const visible = resolveVisibleMessagePositions(projection);
     return readVisibleMessageRange(projection, 0, visible.total);
+  });
+}
+
+/** Visits messages synchronously inside one active-path read snapshot. */
+export function visitSessionTranscriptMessageEvents(
+  scope: SessionTranscriptReadScope,
+  visit: (entry: SessionTranscriptMessageEvent) => void,
+): void {
+  withCurrentProjectionSnapshot(scope, (projection) => {
+    const visible = resolveVisibleMessagePositions(projection);
+    // Keep cursors inside the snapshot; for-of closes them on visitor or parse failure.
+    for (const entry of iterateVisibleMessageRange(projection, 0, visible.total)) {
+      visit(entry);
+    }
   });
 }
 
@@ -378,27 +393,25 @@ export function readRecentSessionTranscriptMessageEvents(
       1024,
       Math.floor(Number.isFinite(options.maxBytes) ? options.maxBytes : 8 * 1024 * 1024),
     );
-    const candidates = readVisibleMessageRange(
+    const candidates = readVisibleMessageMetadata(
       projection,
-      Math.max(0, visible.total - maxLines),
+      Math.max(0, visible.total - Math.min(maxLines, maxMessages)),
       visible.total,
     );
-    const selected: SessionTranscriptMessageEvent[] = [];
+    let selectedStart = visible.total;
     let bytes = 0;
-    for (const event of candidates.toReversed()) {
-      const eventBytes = Buffer.byteLength(JSON.stringify(event.event)) + 1;
-      if (
-        selected.length >= maxMessages ||
-        (selected.length > 0 && bytes + eventBytes > maxBytes)
-      ) {
+    for (const row of candidates.toReversed()) {
+      // Keep the newest event even when oversized, then a contiguous suffix. Size stored JSONL
+      // before loading payloads so a small usage budget cannot materialize the entire line window.
+      if (selectedStart < visible.total && bytes + row.serialized_bytes > maxBytes) {
         break;
       }
-      selected.push(event);
-      bytes += eventBytes;
+      selectedStart = row.logicalPosition;
+      bytes += row.serialized_bytes;
     }
     return {
       activeLeafEntryId: projection.state.leafEventId,
-      events: selected.toReversed(),
+      events: readVisibleMessageRange(projection, selectedStart, visible.total),
       totalMessages: visible.total,
     };
   });
