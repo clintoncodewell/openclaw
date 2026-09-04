@@ -33,6 +33,30 @@ fresh lease. Every run still syncs the current checkout.
 `OPENCLAW_TESTBOX_ALLOW_STALE=1` is only for intentional diagnostics, not
 release proof.
 
+Testbox runs and POSIX remote changed gates freeze source into a Git bundle
+against the pinned base. These runs require Crabbox 0.37.0 or later for
+`sync-plan --json`; upgrade Crabbox before retrying an older binary. This API floor
+does not apply to help, warmup, status, or runs that do not prepare a source bundle.
+Selection uses Crabbox's sync policy and Git's repository, info, and effective global
+exclusions, including repo-local overrides, for untracked files. Tracked ignored
+files and staged ignored additions remain source; an explicit privacy exclusion
+conflicting with required tracked source stops the run before upload.
+
+The command binds the bundle digest and raw source tree. Before running the payload,
+the receiver applies deletions and restores file bytes, symlink target bytes, and
+Git executable modes, then verifies the filesystem directly. Git text filters do not
+normalize this snapshot. Missing, stale, or mismatched bundles fail closed.
+Producer-declared deletions must also be absent, even when the remote index has lost
+them. Deletions use the same privacy policy as source selection; unknown ignored
+runtime data is preserved. Unexpected nonignored receiver files stop the run instead
+of being deleted. The verification receipt reports the original source revision
+separately from the synthetic transport commit; remote `HEAD` identifies that
+verified transport tree, and changed gates compare it with the pinned base.
+Raw-byte differences can conservatively select additional changed paths. Git path
+names must be UTF-8; symlink targets remain raw bytes. Symlinked repository Crabbox
+configuration or ignore files, and privacy-excluded runtime configuration, are
+rejected before upload rather than changing their trust or privacy treatment.
+
 Local test commands below are the normal trusted development path. Keep proof
 proportional to the touched contract.
 
@@ -373,6 +397,16 @@ validates consumed bytes, inherited configuration, generator and manifest inputs
 and resolution topology without starting a compiler on hits. Cache hits restore
 into fresh staging and pass the same entry and relative declaration closure checks
 before publication.
+All tsdown declaration builds (the eight SDK/unified groups, workspace packages,
+and the AI package) resolve source and dependency realpaths within their checkout.
+Ancestor installs are invisible to TypeScript lookup; selected declaration paths
+that escape through symlinks or bundler resolution fail the build. Each checkout
+needs its own installed declaration inputs, including compiler libraries. Local
+pnpm links are supported when their targets remain inside the checkout; shared
+external installs are not. Actual compiler receipts remain unfiltered, and input
+changes still prevent publication. Runtime module resolution and the separate
+native tsgo typecheck and package-boundary owners retain their existing contracts.
+
 Local preparation never overwrites packaged declarations or writes workspace
 forwarding bridges.
 
