@@ -1,6 +1,7 @@
 // Ci Node Test Plan tests cover ci node test plan script behavior.
 import { existsSync, globSync, readdirSync } from "node:fs";
 import { isAbsolute, join, matchesGlob, relative, resolve } from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createChangedExtensionFallbackShards,
@@ -430,7 +431,11 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       group.shard_name.startsWith("cache-warm:auto-reply-reply-commands-3:"),
     );
     expect(autoReplyGroups).toHaveLength(1);
-    expect(autoReplyGroups[0]?.includePatterns).toHaveLength(18);
+    const autoReplyShard = expectDefined(
+      defaultShards.find((shard) => shard.shardName === "auto-reply-reply-commands-3"),
+      "auto-reply command shard",
+    );
+    expect(autoReplyGroups[0]?.includePatterns).toEqual(autoReplyShard.includePatterns);
     expect(autoReplyGroups[0]?.env).toBeUndefined();
 
     expect(groups.find((group) => group.shard_name === "cache-warm:ui-package")).toEqual({
@@ -1675,6 +1680,7 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       "src/gateway/gateway-active-memory.test.ts",
       "src/gateway/gateway-concurrent-streams.test.ts",
       "src/gateway/gateway-cron-process-identity.windows.test.ts",
+      "src/gateway/server.config-patch.test.ts",
     ];
     const full = defaultShards;
     const compact = createNodeTestShardBundles({ compact: true, compactMode: "pull-request" });
@@ -2199,6 +2205,9 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       controlPlaneShards.map((shard) => ({
         checkName: `checks-node-${shard.shardName}`,
         configs: ["test/vitest/vitest.gateway-server.config.ts"],
+        ...(shard.shardName === "agentic-control-plane-runtime-config"
+          ? { pretestBuildMode: "runtime" }
+          : {}),
         ...(shard.shardName === "agentic-control-plane-startup-health-runtime"
           ? { env: { OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS: "60000" } }
           : {}),
@@ -2549,6 +2558,16 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     expect(shardNames).toContain("agentic-gateway-core-3");
     expect(shardNames).toContain("agentic-gateway-methods");
     expect(shardNames).toContain("agentic-plugin-sdk");
+  });
+
+  it("keeps changed native browser tests in UI jobs and out of extension fallback", () => {
+    const target = "extensions/workboard/browser/catalog.test.ts";
+    const shards = createChangedNodeTestShards([target]);
+    expect(shards).not.toBeNull();
+    expect(shards?.flatMap((shard) => shard.targets ?? shard.includePatterns ?? [])).toContain(
+      target,
+    );
+    expect(createChangedExtensionFallbackShards([target])).toEqual([]);
   });
 
   it("retains the changed host plugin test when the store-alias diff forces fallback", () => {
