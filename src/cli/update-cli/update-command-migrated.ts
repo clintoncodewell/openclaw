@@ -72,7 +72,10 @@ export async function inspectActivatedUpdateState(
         stderrTail: `Shared state migration did not finish: expected schema ${candidateSchemaVersions.state}, found ${sharedVersion ?? "missing"}.`,
       });
     }
-    return updateStateSchemaVersionsMatch(schemaVersions, current)
+    return updateStateSchemaVersionsMatch(schemaVersions, current, {
+      sharedPath: resolveOpenClawStateSqlitePath(env),
+      candidateSchemaVersions,
+    })
       ? undefined
       : "state-migrated-no-rollback";
   } catch (error) {
@@ -161,7 +164,6 @@ export async function continueMigratedUpdateInFreshProcess(
               : {}),
           },
         },
-        result,
         rollbackBlockedReason: params.rollbackBlockedReason ?? "state-migrated-no-rollback",
         ...(preManagedServiceStop ? { preManagedServiceStop: stopState } : {}),
       },
