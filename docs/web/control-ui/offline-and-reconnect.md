@@ -9,6 +9,17 @@ sidebarTitle: "Offline and reconnect"
 
 What survives a dropped connection, and how the Control UI recovers when it returns.
 
+## Gateway updates and suspended tabs
+
+An open tab checks the active UI build when it returns to the foreground, comes back online,
+or is restored from browser history. If an update finished while the tab was suspended, it
+can recover without receiving the original update notification or opening a new tab.
+
+Automatic reloads wait for the page to be reachable and respect unsaved-work protection.
+The current route and stored drafts survive the reload. If browser storage is unavailable
+or reload protection blocks recovery, reload the tab after saving your work;
+do not clear site data while drafts or queued messages still need recovery.
+
 ## Connection loss and reconnect
 
 Once a session is established, a dropped Gateway connection does not log you out. The dashboard
@@ -20,6 +31,12 @@ current tab's gateway/session-scoped browser storage, shown as waiting for recon
 automatically when the Gateway returns. Live controls and slash commands remain unavailable while
 offline, except that **Stop** can queue an exact local run ID for replay. A session-only stop
 is not replayed because newer work may start in that session before the connection returns.
+
+Page and sidebar refreshes that fail because the Gateway is suspending, restarting, starting,
+or unreachable show no inline error: the footer connection indicator owns that state. Each panel
+keeps its last data and refreshes automatically once the Gateway accepts work again. Other refresh
+failures remain visible inline with their message and are retried automatically when the Gateway
+becomes available again. These refresh callouts have no manual **Retry** button.
 
 Queued attachments use binary Blobs in the browser's IndexedDB; the outbox keeps only delivery
 metadata and payload references in session storage. Attachment bytes stay with the queued input;
