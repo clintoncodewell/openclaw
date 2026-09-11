@@ -44,6 +44,7 @@ import {
   BOUNDARY_CHECKS,
   selectChecksForShard,
 } from "../../scripts/run-additional-boundary-checks.mts";
+import { buildVitestRunPlans } from "../../scripts/test-projects.test-support.mts";
 import { createTempDirTracker, useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { sharedVitestConfig } from "../vitest/vitest.shared.config.ts";
 import {
@@ -1993,6 +1994,39 @@ function runControlUiI18nSourceFixture(options: {
 }
 
 describe("ci workflow guards", () => {
+  it("credits the max-lines baseline only through an emitted required ratchet guard", () => {
+    const manifest = runCiManifestFixture({
+      bundledPlanner: true,
+      eventName: "pull_request",
+      changedPaths: ["config/max-lines-baseline.txt"],
+      changedPlannerSource: `
+        export const hasBuildArtifactAffectingChange = () => false;
+        export const createChangedNodeTestShards = (_paths, options) => {
+          console.log("max-lines-guard:" + JSON.stringify(options.dedicatedMaxLinesRatchet));
+          return [];
+        };
+        export const createChangedExtensionFallbackShards = () => { throw new Error("Unexpected fallback"); };
+      `,
+    });
+    expect(manifest.status, manifest.output).toBe(0);
+    expect(manifest.output).toContain("max-lines-guard:true");
+    const tasks = JSON.parse(
+      expectDefined(manifest.outputs.checks_fast_core_matrix, "fast ratchet matrix"),
+    ).include;
+    expect(tasks).toContainEqual({
+      check_name: "checks-fast-baseline-ratchets",
+      runtime: "node",
+      task: "baseline-ratchets",
+    });
+    const context = { preflightOutputs: manifest.outputs };
+    expect(runCiGateFixture(renderCiGateEnvironment(context)).status).toBe(0);
+    for (const result of ["failure", "skipped"]) {
+      expect(
+        runCiGateFixture(renderCiGateEnvironment(context, { "checks-fast-core": result })).status,
+      ).toBe(1);
+    }
+  });
+
   it("keeps activity unit proof without unrelated dedicated UI E2E on a PR", () => {
     const manifest = runCiManifestFixture({
       bundledPlanner: true,
@@ -5432,6 +5466,7 @@ require("node:fs").writeFileSync("scheduler-baseline", process.env.OPENCLAW_UPGR
         runnerBackend: runnerProfile,
         dedicatedContractShards: dedicated,
         dedicatedUiE2e: uiE2e,
+        dedicatedMaxLinesRatchet: true,
       });
       for (const job of ["checks-ui-e2e", "checks-ui-e2e-real-gateway"]) {
         expect(
@@ -5956,9 +5991,7 @@ setImmediate(() => {
       "build-artifacts": "blacksmith-32vcpu-ubuntu-2404",
       "checks-node-core-test-nondist-shard": "blacksmith-32vcpu-ubuntu-2404",
       "checks-ui-e2e": "blacksmith-8vcpu-ubuntu-2404",
-      // Same serial Chromium workload as checks-ui-e2e: hosted attempt 1 made it
-      // the run's slowest job (205s mean vs a 150-190s plateau).
-      "checks-ui-e2e-real-gateway": "blacksmith-16vcpu-ubuntu-2404",
+      "checks-ui-e2e-real-gateway": "blacksmith-32vcpu-ubuntu-2404",
       "docker-seed-e2e": "blacksmith-32vcpu-ubuntu-2404",
       "qa-smoke-ci-profile": "blacksmith-16vcpu-ubuntu-2404",
       "check-test-types-hosted-core-shard": "blacksmith-32vcpu-ubuntu-2404",
@@ -8579,6 +8612,60 @@ server.listen(0, "127.0.0.1", () => {
     }
     expect(runStep.run).not.toMatch(/\bsleep\b/u);
     expect(runStep.run).not.toMatch(/\bretry\b/iu);
+  });
+
+  it("retains Android test XML after failures without collecting caches or canceled jobs", () => {
+    const steps = readCiWorkflow().jobs.android.steps as WorkflowStep[];
+    const runIndex = steps.findIndex((step) => step.name === "Run Android ${{ matrix.task }}");
+    const uploadIndex = steps.findIndex((step) => step.name === "Upload Android test reports");
+    const upload = expectDefined(steps[uploadIndex], "Android test reports");
+    expect(uploadIndex).toBeGreaterThan(runIndex);
+    // A status function prevents Actions' implicit success() from hiding failed-test evidence.
+    expect(upload.if).toMatch(/\b(?:always|cancelled|failure|success)\(\)/u);
+    for (const [task, failed, cancelled, expected] of [
+      ["test-play", false, false, true],
+      ["test-play", true, false, true],
+      ["test-play-compat", true, false, true],
+      ["test-third-party", true, false, true],
+      ["test-wear", false, false, true],
+      ["test-wear", true, true, false],
+      ["test-play", false, true, false],
+      ["build-play", false, false, false],
+      ["build-wear", true, false, false],
+      ["ktlint", false, false, false],
+    ] as const) {
+      expect(
+        evaluateWorkflowExpression(upload.if, {
+          eventName: "push",
+          repository: "openclaw/openclaw",
+          runAttempt: 1,
+          matrix: { task },
+          failed,
+          cancelled,
+        }),
+        `${task}: failed=${failed}, cancelled=${cancelled}`,
+      ).toBe(expected);
+    }
+    const root = tempDirs.make("openclaw-android-test-reports-");
+    const reports = [
+      "apps/android/app/build/test-results/testPlayDebugUnitTest/TEST-Play.xml",
+      "apps/android/app/build/test-results/testThirdPartyDebugUnitTest/TEST-ThirdParty.xml",
+      "apps/android/wear/build/test-results/testDebugUnitTest/TEST-Wear.xml",
+      "apps/android/wear-shared/build/test-results/testDebugUnitTest/TEST-Shared.xml",
+    ];
+    const unrelated = [
+      "apps/android/app/build/test-results/testPlayDebugUnitTest/binary/results.bin",
+      "apps/android/app/build/reports/lint-results-playDebug.xml",
+      "apps/android/app/build/outputs/apk/play/debug/app.apk",
+      "apps/android/benchmark/build/test-results/testDebugUnitTest/TEST-Benchmark.xml",
+      ".gradle/caches/TEST-cached.xml",
+    ];
+    for (const file of [...reports, ...unrelated]) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), "synthetic report fixture");
+    }
+    const patterns = String(upload.with?.path).trim().split("\n");
+    expect(globSync(patterns, { cwd: root }).toSorted()).toEqual(reports.toSorted());
   });
 
   it("never keys a Blacksmith sticky disk by unbounded run dimensions", () => {
@@ -11799,6 +11886,70 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
     55_000,
   );
 
+  it("runs the startup corpus once on full canonical main pushes", () => {
+    const files = [
+      "src/config/config-startup-corpus.test.ts",
+      "src/config/state-startup-corpus.test.ts",
+    ];
+    const groups = createNodeTestShardBundles({
+      compactMode: "push",
+      includeReleaseOnlyPluginShards: false,
+    }).flatMap((shard) => shard.groups);
+    const steps: WorkflowStep[] = readCiWorkflow().jobs["checks-fast-core"].steps;
+    for (const file of files) {
+      expect(
+        buildVitestRunPlans([file]).map((plan) => plan.config),
+        file,
+      ).toEqual(["test/vitest/vitest.runtime-config.config.ts"]);
+      const nodeOwners = groups.filter(
+        (group) =>
+          group.configs.includes("test/vitest/vitest.runtime-config.config.ts") &&
+          (!group.includePatterns ||
+            group.includePatterns.some((pattern) => minimatch(file, pattern))),
+      );
+      expect(nodeOwners, file).toHaveLength(1);
+      const extraOwners = steps.filter(
+        (step) =>
+          step.run?.includes(file) &&
+          (!step.if ||
+            evaluateWorkflowExpression(`\${{ ${step.if} }}`, {
+              eventName: "push",
+              repository: "openclaw/openclaw",
+              ref: "refs/heads/main",
+              matrix: { task: "baseline-ratchets" },
+              runCheck: true,
+              runAttempt: 1,
+            })),
+      );
+      expect(nodeOwners.length + extraOwners.length, file).toBe(1);
+    }
+  });
+
+  it.each([
+    { eventName: "pull_request", runCheck: true },
+    { eventName: "pull_request", runCheck: false },
+    { eventName: "push", runCheck: false },
+    { eventName: "push", ref: "refs/heads/release" },
+    { eventName: "push", repository: "fixture/openclaw" },
+    { eventName: "workflow_dispatch", releaseGate: false },
+    { eventName: "workflow_dispatch", releaseGate: true },
+  ] as const)("retains the startup corpus outside full canonical main: %j", (scenario) => {
+    const steps: WorkflowStep[] = readCiWorkflow().jobs["checks-fast-core"].steps;
+    const selected = steps.filter(
+      (step) =>
+        step.run?.includes("src/config/state-startup-corpus.test.ts") &&
+        (!step.if ||
+          evaluateWorkflowExpression(`\${{ ${step.if} }}`, {
+            repository: "openclaw/openclaw",
+            matrix: { task: "baseline-ratchets" },
+            runAttempt: 1,
+            ...scenario,
+          })),
+    );
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.run).toContain("src/config/config-startup-corpus.test.ts");
+  });
+
   it("runs all baseline ratchets against the exact tested tree", () => {
     const workflow = readCiWorkflow();
     const maxLinesRatchet = readFileSync("scripts/check-max-lines-ratchet.mts", "utf8");
@@ -13692,7 +13843,7 @@ printf '%s\n' "\${CURL_SUCCESS_IP:-203.0.113.7}"
         name: "checks-ui-e2e-real-gateway",
         setup: realGatewaySetup,
         matrix: {},
-        blacksmithRunner: "blacksmith-16vcpu-ubuntu-2404",
+        blacksmithRunner: "blacksmith-32vcpu-ubuntu-2404",
       },
     ] as const;
     const routingScenarios = [
