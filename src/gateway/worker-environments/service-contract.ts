@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { SessionPlacementMachine } from "../../../packages/gateway-protocol/src/index.js";
+import type {
+  SessionPlacementMachine,
+  SessionsReclaimParams,
+} from "../../../packages/gateway-protocol/src/index.js";
 import type { DevicePlacementRequirement } from "../../agents/harness/types.js";
 import type {
   WorkerDesktopApp,
@@ -59,6 +62,8 @@ export type WorkerDesktopObserveResult = {
   wsPath: string;
   expiresAtMs: number;
   control: boolean;
+  /** Provider permission to request resizing, not negotiated RFB support. */
+  canResize?: boolean;
   vncPassword?: string;
 };
 
@@ -151,9 +156,13 @@ export type WorkerPlacementReclaimRequest = {
   sessionId: string;
   sessionKey: string;
   agentId: string;
+  recoverToGateway?: SessionsReclaimParams["recoverToGateway"];
 };
 
-export type WorkerPlacementMoveRequest = WorkerPlacementReclaimRequest & {
+export type WorkerPlacementMoveRequest = Pick<
+  WorkerPlacementReclaimRequest,
+  "sessionId" | "sessionKey" | "agentId"
+> & {
   source: WorkerPlacementMoveSource;
   target: WorkerPlacementMoveTarget;
   abandonSource?: true;

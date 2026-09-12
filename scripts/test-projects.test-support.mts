@@ -31,6 +31,7 @@ import {
 import { codexExtensionTestRoots } from "../test/vitest/vitest.extension-codex-paths.mjs";
 import { matrixExtensionTestRoots } from "../test/vitest/vitest.extension-matrix-paths.mjs";
 import { telegramExtensionTestRoots } from "../test/vitest/vitest.extension-telegram-paths.mjs";
+import { gatewayPluginTestFiles } from "../test/vitest/vitest.gateway-server-paths.mjs";
 import { packageContractTestFiles } from "../test/vitest/vitest.package-contract-paths.mjs";
 import { resolveVitestFsModuleCacheRoot } from "../test/vitest/vitest.performance-config.ts";
 import {
@@ -134,6 +135,7 @@ type ChangedTestTargetOptions = {
   combineSiblingWithImportGraph?: boolean;
   forceFullImportGraph?: boolean;
   includeExtensionImpact?: boolean;
+  watchMode?: boolean;
 };
 
 type ChangedTestTargetPlan = {
@@ -249,7 +251,8 @@ const EXTENSION_PROVIDERS_VITEST_CONFIG = "test/vitest/vitest.extension-provider
 const EXTENSION_QA_VITEST_CONFIG = "test/vitest/vitest.extension-qa.config.ts";
 const EXTENSION_SIGNAL_VITEST_CONFIG = "test/vitest/vitest.extension-signal.config.ts";
 const EXTENSION_SLACK_VITEST_CONFIG = "test/vitest/vitest.extension-slack.config.ts";
-const EXTENSION_TEAM_REPORTS_VITEST_CONFIG = "test/vitest/vitest.extension-team-reports.config.ts";
+const EXTENSION_DATABASE_WORKERS_VITEST_CONFIG =
+  "test/vitest/vitest.extension-database-workers.config.ts";
 const EXTENSION_TELEGRAM_VITEST_CONFIG = "test/vitest/vitest.extension-telegram.config.ts";
 const EXTENSION_VOICE_CALL_VITEST_CONFIG = "test/vitest/vitest.extension-voice-call.config.ts";
 const EXTENSION_WHATSAPP_VITEST_CONFIG = "test/vitest/vitest.extension-whatsapp.config.ts";
@@ -539,7 +542,7 @@ const VITEST_CONFIG_BY_KIND: Record<string, string> = {
   extensionIrc: EXTENSION_IRC_VITEST_CONFIG,
   extensionLine: EXTENSION_LINE_VITEST_CONFIG,
   extensionMattermost: EXTENSION_MATTERMOST_VITEST_CONFIG,
-  extensionTeamReports: EXTENSION_TEAM_REPORTS_VITEST_CONFIG,
+  extensionDatabaseWorkers: EXTENSION_DATABASE_WORKERS_VITEST_CONFIG,
   extensionTelegram: EXTENSION_TELEGRAM_VITEST_CONFIG,
   extensionVoiceCall: EXTENSION_VOICE_CALL_VITEST_CONFIG,
   extensionWhatsApp: EXTENSION_WHATSAPP_VITEST_CONFIG,
@@ -1283,7 +1286,7 @@ function includePatternMatchesAnyFile(pattern: string, files: string[]) {
 function resolveExplicitSourceTestTargets(
   targetArg: string,
   cwd: string,
-  options: Pick<ChangedTestTargetOptions, "forceFullImportGraph"> = {},
+  options: Pick<ChangedTestTargetOptions, "forceFullImportGraph" | "watchMode"> = {},
 ) {
   const relative = toRepoRelativeTarget(targetArg, cwd);
   const kind = classifyTarget(targetArg, cwd);
@@ -1296,11 +1299,14 @@ function resolveExplicitSourceTestTargets(
   if (isTestFileTarget(relative)) {
     return null;
   }
-  const preciseTargets = resolvePreciseChangedTestTargets(relative, {
-    cwd,
-    forceFullImportGraph: options.forceFullImportGraph === true,
-  });
-  if (preciseTargets && preciseTargets.length > 0) {
+  const preciseTargets = [
+    ...(resolvePreciseChangedTestTargets(relative, {
+      cwd,
+      forceFullImportGraph: options.forceFullImportGraph === true,
+    }) ?? []),
+    ...(options.watchMode ? [] : resolveKovaSchemaTestTargets(relative)),
+  ];
+  if (preciseTargets.length > 0) {
     return [...new Set(preciseTargets)].toSorted((left, right) => left.localeCompare(right));
   }
   if (!isTestSupportFileTarget(relative)) {
@@ -1315,7 +1321,7 @@ function resolveExplicitSourceTestTargets(
   ].toSorted((left, right) => left.localeCompare(right));
 }
 
-function expandExplicitSourceTestTargets(targetArgs: string[], cwd: string) {
+function expandExplicitSourceTestTargets(targetArgs: string[], cwd: string, watchMode: boolean) {
   const sourceTargetCount = targetArgs.filter((targetArg) => {
     const relative = toRepoRelativeTarget(targetArg, cwd);
     return isExistingFileTarget(targetArg, cwd) && !isTestFileTarget(relative);
@@ -1362,6 +1368,7 @@ function expandExplicitSourceTestTargets(targetArgs: string[], cwd: string) {
     }
     const targets = resolveExplicitSourceTestTargets(targetArg, cwd, {
       forceFullImportGraph,
+      watchMode,
     });
     return targets && targets.length > 0 ? targets : [targetArg];
   });
@@ -1437,7 +1444,7 @@ function isCanonicalAgentOwnerDirectoryTarget(targetArg: string, cwd: string) {
  * Finds explicit test path targets that do not match any known project plan.
  */
 export function findUnmatchedExplicitTestTargets(args: string[], cwd = process.cwd()) {
-  const { targetArgs } = parseTestProjectsArgs(args, cwd);
+  const { targetArgs, watchMode } = parseTestProjectsArgs(args, cwd);
   if (targetArgs.length === 0) {
     return [];
   }
@@ -1489,7 +1496,7 @@ export function findUnmatchedExplicitTestTargets(args: string[], cwd = process.c
       continue;
     }
 
-    const explicitSupportTargets = resolveExplicitSourceTestTargets(targetArg, cwd);
+    const explicitSupportTargets = resolveExplicitSourceTestTargets(targetArg, cwd, { watchMode });
     if (explicitSupportTargets) {
       if (explicitSupportTargets.length === 0) {
         unmatched.push({
@@ -3339,6 +3346,14 @@ function resolveAppcastTargets(changedPath: string) {
   return changedPath === "appcast.xml" ? APPCAST_TEST_TARGETS : null;
 }
 
+function resolveKovaSchemaTestTargets(changedPath: string) {
+  // The workflow fixture reads schema bytes, so imports cannot express this dependency.
+  return changedPath === "src/config/zod-schema.agent-defaults.ts" ||
+    changedPath === "src/config/zod-schema.agent-defaults-base.ts"
+    ? ["test/scripts/openclaw-performance-workflow.test.ts"]
+    : [];
+}
+
 function resolvePreciseChangedTestTargets(
   changedPath: string,
   options: ChangedTestTargetOptions & { skipImportGraph?: boolean },
@@ -3461,7 +3476,10 @@ export function resolveChangedTestTargetPlan(
   }
   const plan: ChangedTestTargetPlan = {
     mode: "targets",
-    targets: [...new Set(targets)],
+    targets: uniqueOrdered([
+      ...targets,
+      ...(options.watchMode ? [] : executableChangedPaths.flatMap(resolveKovaSchemaTestTargets)),
+    ]),
   };
   if (skippedBroadFallbackPaths.length > 0) {
     plan.skippedBroadFallbackPaths = [...new Set(skippedBroadFallbackPaths)];
@@ -3506,6 +3524,7 @@ export function resolveChangedTestTargetPlanForArgs(
   return resolveChangedTestTargetPlan(changedPaths, {
     cwd,
     ...options,
+    watchMode: parseTestProjectsArgs(args, cwd).watchMode,
   });
 }
 
@@ -3514,6 +3533,9 @@ function classifyTarget(arg: string, cwd: string) {
   const configTargetKind = resolveVitestConfigTargetKind(relative);
   if (configTargetKind) {
     return configTargetKind;
+  }
+  if (gatewayPluginTestFiles.includes(relative)) {
+    return "gatewayMethods";
   }
   if (isAgentsCoreIsolatedTestFile(relative)) {
     return agentVitestProjectOwners.coreIsolated.kind;
@@ -3859,7 +3881,7 @@ export function buildVitestRunPlans(
     );
   }
   const activeTargetArgs = expandBroadToolingScriptTargets(
-    expandExplicitSourceTestTargets(requestedTargetArgs, cwd),
+    expandExplicitSourceTestTargets(requestedTargetArgs, cwd, watchMode),
     cwd,
     watchMode,
   );

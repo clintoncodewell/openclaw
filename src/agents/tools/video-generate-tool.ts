@@ -28,7 +28,7 @@ import {
   type MediaGenerateBackgroundScheduler,
 } from "./media-generate-background-shared.js";
 import {
-  runMediaGenerationTask,
+  prepareMediaGenerationTask,
   videoGenerationTaskLifecycle,
   type VideoGenerationTaskHandle,
 } from "./media-generate-background.js";
@@ -574,6 +574,7 @@ export function createVideoGenerateTool(options?: {
         acquired?.assertOpen();
         const loadedReferenceImages = await loadReferenceAssets({
           inputs: imageInputs,
+          roles: imageRoles,
           expectedKind: "image",
           maxBytes: resolveGeneratedMediaMaxBytes(effectiveCfg, "image"),
           workspaceDir: options?.workspaceDir,
@@ -581,16 +582,9 @@ export function createVideoGenerateTool(options?: {
           ssrfPolicy: remoteMediaSsrfPolicy,
           signal,
         });
-        // Attach roles to the loaded image assets (positional, by index into images[]).
-        for (let i = 0; i < loadedReferenceImages.length; i++) {
-          const role = imageRoles[i];
-          const asset = loadedReferenceImages.at(i);
-          if (role && asset) {
-            asset.sourceAsset.role = role;
-          }
-        }
         const loadedReferenceVideos = await loadReferenceAssets({
           inputs: videoInputs,
+          roles: videoRoles,
           expectedKind: "video",
           maxBytes: resolveGeneratedMediaMaxBytes(effectiveCfg, "video"),
           workspaceDir: options?.workspaceDir,
@@ -598,15 +592,9 @@ export function createVideoGenerateTool(options?: {
           ssrfPolicy: remoteMediaSsrfPolicy,
           signal,
         });
-        for (let i = 0; i < loadedReferenceVideos.length; i++) {
-          const role = videoRoles[i];
-          const asset = loadedReferenceVideos.at(i);
-          if (role && asset) {
-            asset.sourceAsset.role = role;
-          }
-        }
         const loadedReferenceAudios = await loadReferenceAssets({
           inputs: audioInputs,
+          roles: audioRoles,
           expectedKind: "audio",
           maxBytes: resolveGeneratedMediaMaxBytes(effectiveCfg, "audio"),
           workspaceDir: options?.workspaceDir,
@@ -614,18 +602,10 @@ export function createVideoGenerateTool(options?: {
           ssrfPolicy: remoteMediaSsrfPolicy,
           signal,
         });
-        for (let i = 0; i < loadedReferenceAudios.length; i++) {
-          const role = audioRoles[i];
-          const asset = loadedReferenceAudios.at(i);
-          if (role && asset) {
-            asset.sourceAsset.role = role;
-          }
-        }
         return {
           kind: "task" as const,
           params: {
             lifecycle: videoGenerationTaskLifecycle,
-            generationLabel: "video" as const,
             sessionKey: options?.agentSessionKey,
             requesterAgentId: options?.requesterAgentId,
             requesterOrigin: options?.requesterOrigin,
@@ -685,38 +665,12 @@ export function createVideoGenerateTool(options?: {
           },
         };
       };
-      let prepared: Awaited<ReturnType<typeof prepare>>;
-      try {
-        acquired?.assertOpen();
-        prepared = acquired ? await acquired.run(prepare) : await prepare();
-        if (prepared.kind === "task") {
-          // Accepted tasks own paid work independently; cancellation applies before admission.
-          signal?.throwIfAborted();
-          acquired?.assertOpen();
-        }
-      } catch (error) {
-        let cleanupFailure: { error: unknown } | undefined;
-        try {
-          await acquired?.release();
-        } catch (cleanupError) {
-          cleanupFailure = { error: cleanupError };
-        }
-        if (cleanupFailure) {
-          throw new AggregateError(
-            [error, cleanupFailure.error],
-            "Video preflight and cleanup failed",
-            {
-              cause: error,
-            },
-          );
-        }
-        throw error;
-      }
-      if (prepared.kind === "result") {
-        await acquired?.release();
-        return prepared.result;
-      }
-      return runMediaGenerationTask({ ...prepared.params, resources: acquired });
+      return prepareMediaGenerationTask({
+        generationLabel: "video",
+        resources: acquired,
+        signal,
+        prepare,
+      });
     },
   };
 }

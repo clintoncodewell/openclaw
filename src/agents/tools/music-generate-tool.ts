@@ -28,7 +28,7 @@ import {
 } from "./media-generate-background-shared.js";
 import {
   musicGenerationTaskLifecycle,
-  runMediaGenerationTask,
+  prepareMediaGenerationTask,
   type MusicGenerationTaskHandle,
 } from "./media-generate-background.js";
 import { acquireMusicGenerationToolProviders } from "./media-generation-tool-providers.js";
@@ -152,12 +152,7 @@ function normalizeReferenceImageInputs(args: Record<string, unknown>): string[] 
 
 function validateMusicGenerationCapabilities(params: {
   provider: MusicGenerationProvider | undefined;
-  model?: string;
   inputImageCount: number;
-  lyrics?: string;
-  instrumental?: boolean;
-  durationSeconds?: number;
-  format?: MusicGenerationOutputFormat;
 }) {
   const provider = params.provider;
   if (!provider) {
@@ -423,18 +418,12 @@ export function createMusicGenerateTool(options?: {
         });
         validateMusicGenerationCapabilities({
           provider: selectedProvider,
-          model: selectedModelRef?.model ?? model ?? selectedProvider?.defaultModel,
           inputImageCount: loadedReferenceImages.length,
-          lyrics,
-          instrumental,
-          durationSeconds,
-          format,
         });
         return {
           kind: "task" as const,
           params: {
             lifecycle: musicGenerationTaskLifecycle,
-            generationLabel: "music" as const,
             sessionKey: options?.agentSessionKey,
             requesterAgentId: options?.requesterAgentId,
             requesterOrigin: options?.requesterOrigin,
@@ -489,38 +478,12 @@ export function createMusicGenerateTool(options?: {
           },
         };
       };
-      let prepared: Awaited<ReturnType<typeof prepare>>;
-      try {
-        acquired?.assertOpen();
-        prepared = acquired ? await acquired.run(prepare) : await prepare();
-        if (prepared.kind === "task") {
-          // Accepted tasks own paid work independently; cancellation applies before admission.
-          signal?.throwIfAborted();
-          acquired?.assertOpen();
-        }
-      } catch (error) {
-        let cleanupFailure: { error: unknown } | undefined;
-        try {
-          await acquired?.release();
-        } catch (cleanupError) {
-          cleanupFailure = { error: cleanupError };
-        }
-        if (cleanupFailure) {
-          throw new AggregateError(
-            [error, cleanupFailure.error],
-            "Music preflight and cleanup failed",
-            {
-              cause: error,
-            },
-          );
-        }
-        throw error;
-      }
-      if (prepared.kind === "result") {
-        await acquired?.release();
-        return prepared.result;
-      }
-      return runMediaGenerationTask({ ...prepared.params, resources: acquired });
+      return prepareMediaGenerationTask({
+        generationLabel: "music",
+        resources: acquired,
+        signal,
+        prepare,
+      });
     },
   };
 }
