@@ -49,12 +49,14 @@ const runtimeConsumers = [
     mode: "runtime" as const,
     dir: "extensions",
   })),
-  {
-    file: "src/node-host/linux-node-plugin.integration.test.ts",
-    configs: ["test/vitest/vitest.unit.config.ts", "test/vitest/vitest.unit-src.config.ts"],
-    mode: "runtime",
-    dir: "",
-  },
+  ...["src/node-host/linux-node-plugin.integration.test.ts", "src/entry.memory-json.test.ts"].map(
+    (file) => ({
+      file,
+      configs: ["test/vitest/vitest.unit.config.ts", "test/vitest/vitest.unit-src.config.ts"],
+      mode: "runtime" as const,
+      dir: "",
+    }),
+  ),
   ...[
     "test/openai-model-discovery-auth-order.test.ts",
     "test/plugin-npm-runtime-build.test.ts",
@@ -140,13 +142,17 @@ const runtimeConsumers = [
     mode: "private-qa",
     dir: "extensions",
   },
-  // Sticker selection loads real provider registrations; only image description is mocked.
-  {
-    file: "extensions/telegram/src/sticker-cache.selection.test.ts",
+  // These Telegram tests consume real built runtime sidecars. Sticker selection
+  // loads provider registrations; polling launches the production ingress Worker.
+  ...[
+    "extensions/telegram/src/polling-session.test.ts",
+    "extensions/telegram/src/sticker-cache.selection.test.ts",
+  ].map((file) => ({
+    file,
     configs: ["test/vitest/vitest.extension-telegram.config.ts"],
-    mode: "runtime",
+    mode: "runtime" as const,
     dir: "extensions",
-  },
+  })),
   ...[
     "src/cli/acp-cli-exit.process.test.ts",
     "src/cli/update-dry-run-state.process.test.ts",
