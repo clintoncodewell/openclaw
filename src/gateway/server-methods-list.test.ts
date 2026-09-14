@@ -208,6 +208,8 @@ describe("listGatewayMethods", () => {
       "canvas.document.preview",
       "computer.status",
       "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -243,6 +245,8 @@ describe("listGatewayMethods", () => {
       "canvas.document.preview",
       "computer.status",
       "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
     ]);
   });
 
@@ -258,6 +262,8 @@ describe("listGatewayMethods", () => {
 
   it("advertises Control UI session pull request detection", () => {
     expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests.subscribe");
+    expect(listGatewayMethods()).toContain("controlUi.sessionPullRequests.checks");
+    expect(coreGatewayHandlers["controlUi.sessionPullRequests.checks"]).toBeTypeOf("function");
     expect(GATEWAY_EVENTS).toContain("controlUi.sessionPullRequests.changed");
   });
 
@@ -405,6 +411,8 @@ describe("listGatewayMethods", () => {
       "canvas.document.preview",
       "computer.status",
       "computer.invoke",
+      "sessions.activitySummary.ensure",
+      "controlUi.sessionPullRequests.checks",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));

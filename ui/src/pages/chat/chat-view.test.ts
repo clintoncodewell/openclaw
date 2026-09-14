@@ -612,11 +612,12 @@ function createChatModelControlsProps(state: ChatHeaderTestState): ChatModelCont
         value,
         targetSessionKey,
       ),
-    onModelSelect: (value, targetSessionKey) =>
+    onModelSelect: (value, targetSessionKey, agentRuntime) =>
       switchChatModel(
         state as unknown as Parameters<typeof switchChatModel>[0],
         value,
         targetSessionKey,
+        agentRuntime,
       ),
     onThinkingSelect: (value, targetSessionKey) =>
       switchChatThinkingLevel(
@@ -807,7 +808,7 @@ describe("chat typing status", () => {
         { id: "zoe", label: "Zoe" },
       ],
       expectedText: "Ayaan, Liam, Maya, Zoe are typing…",
-      expectedAvatars: 3,
+      expectedAvatars: 4,
     },
   ])("renders $expectedText in the transcript", ({ actors, expectedText, expectedAvatars }) => {
     const container = renderChatView({ typingActors: actors });
@@ -815,9 +816,14 @@ describe("chat typing status", () => {
 
     expect(indicator?.closest('[data-virtual-row-key="presence:typing"]')).not.toBeNull();
     expect(indicator?.closest(".agent-chat__composer-shell")).toBeNull();
-    expect(indicator?.querySelectorAll(".chat-avatar")).toHaveLength(expectedAvatars);
     expect(
-      indicator?.querySelector(".agent-chat__typing-avatars")?.getAttribute("aria-hidden"),
+      indicator?.querySelectorAll(
+        ".chat-message-avatar-anchor > :is(.chat-avatar, .chat-avatar-slot), .chat-group-footer .chat-author-avatar",
+      ),
+    ).toHaveLength(expectedAvatars);
+    expect(indicator?.querySelectorAll(".agent-chat__typing-state")).toHaveLength(actors.length);
+    expect(
+      indicator?.querySelector(".agent-chat__typing-bubble")?.getAttribute("aria-hidden"),
     ).toBe("true");
     expect(indicator?.textContent).toContain(expectedText);
   });
@@ -877,7 +883,7 @@ function createBackgroundTasks(
     activeCount: 0,
     subagentActivity: {
       rows: [],
-      overflowWorking: 0,
+      overflowCount: 0,
       taskIds: new Set<string>(),
       nextExpiryAt: null,
     },
@@ -1826,9 +1832,9 @@ describe("direct thread avatar mode", () => {
   ) => ({ props: { sessionKey, messages: message, ...overrides }, direct });
 
   it.each([
-    {
-      name: "classifies by canonical session kind even when DM rows carry sender labels",
-      cases: [
+    [
+      "classifies by canonical session kind even when DM rows carry sender labels",
+      [
         avatarCase("kind-direct", true, {
           sessions: sessionsListWithKind("kind-direct", "direct"),
           messages: labeledHistory,
@@ -1837,53 +1843,53 @@ describe("direct thread avatar mode", () => {
           sessions: sessionsListWithKind("kind-group", "group"),
         }),
       ],
-    },
-    {
-      name: "keeps avatars in global sessions, which can aggregate group senders",
-      cases: [avatarCase("global", false)],
-    },
-    {
-      name: "matches session metadata across equivalent alias keys",
-      cases: [
+    ],
+    [
+      "keeps avatars in global sessions, which can aggregate group senders",
+      [avatarCase("global", false)],
+    ],
+    [
+      "matches session metadata across equivalent alias keys",
+      [
         avatarCase("main", true, {
           sessions: sessionsListWithKind("agent:main:main", "direct"),
           messages: labeledHistory,
         }),
       ],
-    },
-    {
-      name: "keeps avatars in direct sessions when the gateway attributes identities",
-      cases: [
+    ],
+    [
+      "keeps avatars in direct sessions when the gateway attributes identities",
+      [
         avatarCase("kind-direct", false, {
           sessions: sessionsListWithKind("kind-direct", "direct"),
           messages: labeledHistory,
           userId: "profile-1",
         }),
       ],
-    },
-    {
-      name: "falls back to session-key shape when session metadata is missing",
-      cases: [
+    ],
+    [
+      "falls back to session-key shape when session metadata is missing",
+      [
         avatarCase("agent:main:telegram:direct:2", true, { messages: labeledHistory }),
         avatarCase("agent:main:telegram:group:42", false),
       ],
-    },
-    {
-      name: "keeps avatars when a main alias selects the canonical global row",
-      cases: [
+    ],
+    [
+      "keeps avatars when a main alias selects the canonical global row",
+      [
         avatarCase("agent:work:main", false, {
           sessions: sessionsListWithKind("global", "global"),
           sessionHost: globalHost,
         }),
       ],
-    },
-    {
-      name: "classifies global-scope main aliases without a listed global row",
-      cases: [avatarCase("agent:work:main", false, { sessionHost: globalHost })],
-    },
-    {
-      name: "ignores stray global rows for main aliases outside global scope",
-      cases: [
+    ],
+    [
+      "classifies global-scope main aliases without a listed global row",
+      [avatarCase("agent:work:main", false, { sessionHost: globalHost })],
+    ],
+    [
+      "ignores stray global rows for main aliases outside global scope",
+      [
         avatarCase("agent:work:main", true, {
           sessions: sessionsListWithKind("global", "global"),
           sessionHost: {
@@ -1892,10 +1898,10 @@ describe("direct thread avatar mode", () => {
           },
         }),
       ],
-    },
-    {
-      name: "prefers the equivalent direct row over a global row for main aliases",
-      cases: [
+    ],
+    [
+      "prefers the equivalent direct row over a global row for main aliases",
+      [
         avatarCase("agent:work:main", true, {
           sessions: createSessionsResultFromRows([
             { key: "global", kind: "global", updatedAt: 2 },
@@ -1904,14 +1910,14 @@ describe("direct thread avatar mode", () => {
           sessionHost: globalHost,
         }),
       ],
-    },
-    {
-      name: "treats explicit agent global keys as global even without a session row",
-      cases: [avatarCase("agent:work:global", false)],
-    },
-    {
-      name: "keeps avatars when a forwarded cross-session message joins a direct thread",
-      cases: [
+    ],
+    [
+      "treats explicit agent global keys as global even without a session row",
+      [avatarCase("agent:work:global", false)],
+    ],
+    [
+      "keeps avatars when a forwarded cross-session message joins a direct thread",
+      [
         avatarCase("kind-direct", false, {
           sessions: sessionsListWithKind("kind-direct", "direct"),
           messages: [
@@ -1931,8 +1937,8 @@ describe("direct thread avatar mode", () => {
           ],
         }),
       ],
-    },
-  ])("$name", ({ cases }) => {
+    ],
+  ])("%s", (_name, cases) => {
     for (const { props, direct } of cases) {
       const container = renderChatView(props);
       expect(
@@ -3773,9 +3779,9 @@ describe("chat loading skeleton", () => {
   });
 
   it.each([
-    {
-      name: "does not announce progress for another session send",
-      props: {
+    [
+      "does not announce progress for another session send",
+      {
         sessionKey: "session-b",
         sending: true,
         queue: [
@@ -3787,22 +3793,22 @@ describe("chat loading skeleton", () => {
           }),
         ],
       },
-      announcement: "",
-      exact: true,
-      spark: false,
-    },
-    {
-      name: "shows the working spark while the current session send waits for model switching",
-      props: {
+      "",
+      true,
+      false,
+    ],
+    [
+      "shows the working spark while the current session send waits for model switching",
+      {
         queue: [createPendingSend({ sendState: "waiting-model" })],
       },
-      announcement: "Preparing model",
-      exact: false,
-      spark: true,
-    },
-    {
-      name: "shows active model-switch progress over the previous run's terminal status",
-      props: {
+      "Preparing model",
+      false,
+      true,
+    ],
+    [
+      "shows active model-switch progress over the previous run's terminal status",
+      {
         runStatus: {
           phase: "done" as const,
           runId: "run-previous",
@@ -3811,13 +3817,13 @@ describe("chat loading skeleton", () => {
         },
         queue: [createPendingSend({ createdAt: 999, sendState: "waiting-model" })],
       },
-      announcement: "Preparing model",
-      exact: false,
-      spark: true,
-    },
-    {
-      name: "keeps terminal status for the submitted run while its acknowledgement is pending",
-      props: {
+      "Preparing model",
+      false,
+      true,
+    ],
+    [
+      "keeps terminal status for the submitted run while its acknowledgement is pending",
+      {
         runStatus: {
           phase: "done" as const,
           runId: "run-main",
@@ -3826,20 +3832,20 @@ describe("chat loading skeleton", () => {
         },
         queue: [createPendingSend({ createdAt: 999 })],
       },
-      announcement: "Done",
-      exact: true,
-      spark: false,
-    },
-    {
-      name: "does not announce progress for reconnect-waiting sends",
-      props: {
+      "Done",
+      true,
+      false,
+    ],
+    [
+      "does not announce progress for reconnect-waiting sends",
+      {
         queue: [createPendingSend({ sendState: "waiting-reconnect" })],
       },
-      announcement: "",
-      exact: true,
-      spark: false,
-    },
-  ])("$name", ({ props, announcement, exact, spark }) => {
+      "",
+      true,
+      false,
+    ],
+  ])("%s", (_name, props, announcement, exact, spark) => {
     const container = renderChatView(props);
     const announcementElement = container.querySelector(".agent-chat__run-status-announcement");
     expect(announcementElement).not.toBeNull();
@@ -7271,37 +7277,17 @@ describe("chat model controls", () => {
   );
 
   it.each([
-    {
-      kind: "personal",
-      selected: "openai:work",
-      order: ["openai:personal"],
-      expected: "Subscription · work@example.com",
-    },
-    {
-      kind: "shared",
-      selected: "openai:personal",
-      order: ["openai:work"],
-      expected: "Subscription · peter@steipete.me",
-    },
-    {
-      kind: "automatic",
-      selected: undefined,
-      order: ["openai:personal"],
-      expected: "Subscription",
-    },
-    {
-      kind: "personal",
-      selected: "anthropic:personal",
-      order: ["openai:personal"],
-      expected: "Subscription",
-    },
-    { kind: "personal", selected: undefined, order: undefined, expected: "Subscription" },
-    { kind: undefined, selected: undefined, order: ["openai:personal"], expected: "Subscription" },
-    { kind: "personal", selected: "openai:key", order: ["openai:personal"], expected: "API" },
-    { kind: "automatic", selected: undefined, order: ["openai:key"], expected: "Subscription" },
+    ["personal", "openai:work", ["openai:personal"], "Subscription · work@example.com"],
+    ["shared", "openai:personal", ["openai:work"], "Subscription · peter@steipete.me"],
+    ["automatic", undefined, ["openai:personal"], "Subscription"],
+    ["personal", "anthropic:personal", ["openai:personal"], "Subscription"],
+    ["personal", undefined, undefined, "Subscription"],
+    [undefined, undefined, ["openai:personal"], "Subscription"],
+    ["personal", "openai:key", ["openai:personal"], "API"],
+    ["automatic", undefined, ["openai:key"], "Subscription"],
   ] as const)(
-    "derives $kind identity from $selected without borrowing the provider plan or order $order",
-    ({ kind, selected, order, expected }) => {
+    "derives %s identity from %s without borrowing the provider plan or order %s",
+    (kind, selected, order, expected) => {
       const { state } = createChatHeaderState({
         models: [{ id: "gpt-5.5", name: "GPT-5.5", provider: "openai" }],
       });
@@ -7637,14 +7623,10 @@ describe("chat model controls", () => {
   });
 
   it.each([
-    { name: "session selection", overrides: {}, expected: "openai/gpt-5.6-sol" },
-    {
-      name: "pending local selection",
-      overrides: { main: "openai/gpt-5.6-luna" },
-      expected: "openai/gpt-5.6-luna",
-    },
-    { name: "explicit default reset", overrides: { main: null }, expected: "gpt-5 · openai" },
-  ])("keeps the $name visible while its catalog loads", ({ overrides, expected }) => {
+    ["session selection", {}, "openai/gpt-5.6-sol"],
+    ["pending local selection", { main: "openai/gpt-5.6-luna" }, "openai/gpt-5.6-luna"],
+    ["explicit default reset", { main: null }, "gpt-5 · openai"],
+  ])("keeps the %s visible while its catalog loads", (_name, overrides, expected) => {
     const { state } = createChatHeaderState({ model: "gpt-5.6-sol", models: [] });
     const container = renderModelControls(state, {
       modelCatalogState: { hasSnapshot: false, status: "loading" },
@@ -7832,7 +7814,7 @@ describe("chat model controls", () => {
     expect(modelOption).toBeInstanceOf(HTMLButtonElement);
     modelOption?.click();
 
-    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
+    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main", null);
   });
 
   it.each([
@@ -7865,7 +7847,11 @@ describe("chat model controls", () => {
       ).find((button) => button.getAttribute("aria-selected") === "false");
       modelOption?.click();
 
-      expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
+      expect(onModelSelect).toHaveBeenCalledWith(
+        modelOption?.dataset.chatModelOption,
+        "main",
+        null,
+      );
     },
   );
 
@@ -8055,7 +8041,7 @@ describe("chat model controls", () => {
     getThinkingSlider(container)?.dispatchEvent(new Event("change", { bubbles: true }));
 
     expect(onFastModeSelect).not.toHaveBeenCalled();
-    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
+    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main", null);
     expect(onThinkingSelect).not.toHaveBeenCalled();
   });
 
@@ -8089,7 +8075,7 @@ describe("chat model controls", () => {
     expect(reset?.textContent).toContain("Default");
     reset?.focus();
     reset?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
     expect(details?.open).toBe(false);
     expect(document.activeElement).toBe(modelSelect);
     container.remove();
@@ -8114,7 +8100,7 @@ describe("chat model controls", () => {
     expect(defaultRow?.getAttribute("aria-selected")).toBe("false");
     expect(defaultRow?.parentElement?.querySelector("[data-chat-model-option]")).toBe(defaultRow);
     defaultRow?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
   });
 
   it("keeps the Default row selectable when the default model needs sign-in", () => {
@@ -8142,7 +8128,7 @@ describe("chat model controls", () => {
     expect(defaultRow?.disabled).toBe(false);
     expect(defaultRow?.querySelector("[data-chat-model-auth-warning]")).not.toBeNull();
     defaultRow?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
     expect(onModelSetup).not.toHaveBeenCalled();
   });
 
@@ -8171,7 +8157,7 @@ describe("chat model controls", () => {
     expect(defaultRow?.getAttribute("aria-selected")).toBe("true");
     expect(defaultRow?.disabled).toBe(false);
     defaultRow?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
     expect(onModelSetup).not.toHaveBeenCalled();
   });
 
@@ -8199,7 +8185,7 @@ describe("chat model controls", () => {
     expect(defaultRow?.getAttribute("aria-selected")).toBe("false");
     defaultRow?.click();
 
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
   });
 
   it.each(["agent", "global"] as const)(
@@ -8226,7 +8212,7 @@ describe("chat model controls", () => {
       expect(reset?.textContent).toContain("Default");
       reset?.click();
 
-      expect(onModelSelect).toHaveBeenCalledWith("", "main");
+      expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
     },
   );
 
@@ -8260,7 +8246,7 @@ describe("chat model controls", () => {
     // Pre-fix this row was already the selected "inherited" sentinel, so the click
     // was swallowed and the stored pin survived forever.
     defaultRow?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
 
     // The default moves away again; the untouched pin is still a pin.
     onModelSelect.mockClear();
@@ -8274,7 +8260,7 @@ describe("chat model controls", () => {
     };
     renderModelControls(state, { onModelSelect }, container);
     container.querySelector<HTMLButtonElement>('[data-chat-model-default="true"]')?.click();
-    expect(onModelSelect).toHaveBeenCalledWith("", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("", "main", null);
     container.remove();
   });
 
@@ -8333,49 +8319,13 @@ describe("chat model controls", () => {
     "locked model labels with runtime %s",
     (runtimeId) => {
       it.each([
-        {
-          name: "catalog label",
-          model: "gpt-5.6-sol",
-          catalog: "known",
-          loading: false,
-          expected: "GPT-5.6 Sol",
-        },
-        {
-          name: "missing catalog entry",
-          model: "gpt-5.6-sol",
-          catalog: "other",
-          loading: false,
-          expected: "openai/gpt-5.6-sol",
-        },
-        {
-          name: "empty catalog",
-          model: "gpt-5.6-sol",
-          catalog: "empty",
-          loading: false,
-          expected: "openai/gpt-5.6-sol",
-        },
-        {
-          name: "refreshing catalog",
-          model: "gpt-5.6-sol",
-          catalog: "known",
-          loading: true,
-          expected: "GPT-5.6 Sol",
-        },
-        {
-          name: "loading catalog without a snapshot",
-          model: "gpt-5.6-sol",
-          catalog: "empty",
-          loading: true,
-          expected: "openai/gpt-5.6-sol",
-        },
-        {
-          name: "no current model despite an unrelated default",
-          model: null,
-          catalog: "other",
-          loading: false,
-          expected: "Session model",
-        },
-      ])("preserves the $name", ({ model, catalog, loading, expected }) => {
+        ["catalog label", "gpt-5.6-sol", "known", false, "GPT-5.6 Sol"],
+        ["missing catalog entry", "gpt-5.6-sol", "other", false, "openai/gpt-5.6-sol"],
+        ["empty catalog", "gpt-5.6-sol", "empty", false, "openai/gpt-5.6-sol"],
+        ["refreshing catalog", "gpt-5.6-sol", "known", true, "GPT-5.6 Sol"],
+        ["loading catalog without a snapshot", "gpt-5.6-sol", "empty", true, "openai/gpt-5.6-sol"],
+        ["no current model despite an unrelated default", null, "other", false, "Session model"],
+      ])("preserves the %s", (_name, model, catalog, loading, expected) => {
         const { state } = createChatHeaderState({
           model,
           modelProvider: model ? "openai" : null,
@@ -8563,13 +8513,17 @@ describe("chat model controls", () => {
       expect(search?.getAttribute("aria-activedescendant")).toBe(highlighted?.id);
 
       search!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      expect(onModelSelect).toHaveBeenCalledWith("anthropic/claude-sonnet-4-6", "main");
+      expect(onModelSelect).toHaveBeenCalledWith("anthropic/claude-sonnet-4-6", "main", null);
       expect(details?.open).toBe(false);
 
       onModelSelect.mockClear();
       details!.open = true;
       details!.dispatchEvent(new KeyboardEvent("keydown", { key: "3", bubbles: true }));
-      expect(onModelSelect).toHaveBeenCalledExactlyOnceWith("anthropic/claude-sonnet-4-6", "main");
+      expect(onModelSelect).toHaveBeenCalledExactlyOnceWith(
+        "anthropic/claude-sonnet-4-6",
+        "main",
+        null,
+      );
       expect(details?.open).toBe(false);
       container.remove();
     },
@@ -8636,7 +8590,7 @@ describe("chat model controls", () => {
     expect(onModelSelect).not.toHaveBeenCalled();
 
     details!.dispatchEvent(new KeyboardEvent("keydown", { key: "1", bubbles: true }));
-    expect(onModelSelect).toHaveBeenCalledWith("anthropic/claude-sonnet-4-6", "main");
+    expect(onModelSelect).toHaveBeenCalledWith("anthropic/claude-sonnet-4-6", "main", null);
     container.remove();
   });
 
@@ -8851,33 +8805,13 @@ describe("chat model controls", () => {
   });
 
   it.each([
-    {
-      name: "a pending same-model switch",
-      modelSwitching: true,
-      sessionRuntimeId: "codex",
-      optionRuntimeId: "codex",
-    },
-    {
-      name: "a different session runtime",
-      modelSwitching: false,
-      sessionRuntimeId: "openclaw",
-      optionRuntimeId: "codex",
-    },
-    {
-      name: "missing session runtime provenance",
-      modelSwitching: false,
-      sessionRuntimeId: undefined,
-      optionRuntimeId: "codex",
-    },
-    {
-      name: "missing catalog runtime provenance",
-      modelSwitching: false,
-      sessionRuntimeId: "codex",
-      optionRuntimeId: undefined,
-    },
+    ["a pending same-model switch", true, "codex", "codex"],
+    ["a different session runtime", false, "openclaw", "codex"],
+    ["missing session runtime provenance", false, undefined, "codex"],
+    ["missing catalog runtime provenance", false, "codex", undefined],
   ])(
-    "does not pair a stale session budget with $name",
-    ({ modelSwitching, optionRuntimeId, sessionRuntimeId }) => {
+    "does not pair a stale session budget with %s",
+    (_name, modelSwitching, sessionRuntimeId, optionRuntimeId) => {
       const { state } = createChatHeaderState({
         model: "gpt-5.6-sol",
         modelProvider: "openai",
@@ -9172,7 +9106,7 @@ describe("chat model controls", () => {
     defaultOption?.click();
 
     await waitForFast(() => {
-      expect(onModelSelect).toHaveBeenCalledWith("", sessionKey);
+      expect(onModelSelect).toHaveBeenCalledWith("", sessionKey, null);
     });
   });
 
@@ -9387,7 +9321,7 @@ describe("chat model controls", () => {
     );
     expect(modelOption).toBeInstanceOf(HTMLButtonElement);
     modelOption?.click();
-    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
+    expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main", null);
 
     const slider = getThinkingSlider(container);
     expect(slider).toBeInstanceOf(HTMLInputElement);
@@ -9611,12 +9545,12 @@ describe("chat model controls", () => {
   });
 
   it.each([
-    { sessionKey: "global", mainKey: "main" },
-    { sessionKey: "agent:work:main", mainKey: "main" },
-    { sessionKey: "agent:work:home", mainKey: "home" },
+    ["global", "main"],
+    ["agent:work:main", "main"],
+    ["agent:work:home", "home"],
   ])(
-    "does not report a failed selected-global model switch after the selected agent changes for $sessionKey",
-    async ({ sessionKey, mainKey }) => {
+    "does not report a failed selected-global model switch after the selected agent changes for %s",
+    async (sessionKey, mainKey) => {
       const modelPatch = createDeferred<unknown>();
       const modelOverrides: Record<string, string | null> = {
         [sessionKey]: "openai/gpt-agent-a-old",
@@ -9737,7 +9671,7 @@ describe("chat model controls", () => {
       ?.click();
 
     await waitForFast(() => {
-      expect(onModelSelect).toHaveBeenCalledWith("openai/gpt-5.4", "main");
+      expect(onModelSelect).toHaveBeenCalledWith("openai/gpt-5.4", "main", null);
     });
     render(renderChatModelControls(props), container);
     expect(
@@ -10204,32 +10138,45 @@ describe("right-click Reply", () => {
     );
   });
 
-  it("opens context menu and calls onSetReply when Reply is selected", () => {
+  it("keeps Reply and composer focus available when the pane rerenders with its menu open", () => {
     const onSetReply = vi.fn();
-    const { bubble } = renderChatBubble(
-      { onSetReply },
+    const transcript = createTestTranscript();
+    const { container, bubble } = renderChatBubble(
+      { onSetReply, transcript },
       {
         messageId: "msg-stable-1",
         senderLabel: "User",
         text: "hello world",
       },
     );
+    document.body.appendChild(container);
+    transcript.hostConnected();
 
-    dispatchContextMenu(bubble);
+    try {
+      dispatchContextMenu(bubble);
 
-    const menu = document.querySelector(".chat-reply-context-menu");
-    expect(menu).not.toBeNull();
-    menu!.querySelector("button")!.click();
+      const menu = document.querySelector(".chat-reply-context-menu");
+      expect(menu).not.toBeNull();
+      renderChatInto(container, { onSetReply, transcript, draft: "A draft update" });
+      menu!.querySelector("button")!.click();
 
-    expect(onSetReply).toHaveBeenCalledTimes(1);
-    const target = itemAt(
-      itemAt(onSetReply.mock.calls, 0, "reply callback call"),
-      0,
-      "reply target",
-    );
-    expect(target.messageId).toBe("msg-stable-1");
-    expect(target.text).toBe("hello world");
-    expect(target.senderLabel).toBe("User");
+      expect(onSetReply).toHaveBeenCalledTimes(1);
+      const target = itemAt(
+        itemAt(onSetReply.mock.calls, 0, "reply callback call"),
+        0,
+        "reply target",
+      );
+      expect(target.messageId).toBe("msg-stable-1");
+      expect(target.text).toBe("hello world");
+      expect(target.senderLabel).toBe("User");
+      expect(document.activeElement).toBe(
+        container.querySelector(".agent-chat__composer-combobox textarea"),
+      );
+    } finally {
+      transcript.hostDisconnected();
+      render(null, container);
+      container.remove();
+    }
   });
 
   it("backs off before an emoji that crosses the reply target limit", () => {

@@ -52,12 +52,10 @@ import type {
   SessionListRowContext,
 } from "./session-utils-contracts.js";
 import {
-  buildCompactionCheckpointPreview,
   deriveSessionTitle,
   resolveEstimatedSessionCostUsd,
-  resolveLatestCompactionCheckpoint,
+  resolveSessionCompactionSummary,
   resolvePositiveNumber,
-  resolveProjectableCompactionCheckpoints,
   buildStoreChildSessionIndex,
 } from "./session-utils-core.js";
 import {
@@ -199,13 +197,8 @@ export function buildGatewaySessionRow(params: {
     entry?.pinnedAt !== undefined && isPinnableSessionEntry(key, entry)
       ? entry.pinnedAt
       : undefined;
-  const compactionCheckpoints = resolveProjectableCompactionCheckpoints(entry);
-  const compactionCheckpointCount = Array.isArray(entry?.compactionCheckpoints)
-    ? compactionCheckpoints.length
-    : undefined;
-  const latestCompactionCheckpoint = buildCompactionCheckpointPreview(
-    resolveLatestCompactionCheckpoint(compactionCheckpoints),
-  );
+  const { compactionCheckpointCount, latestCompactionCheckpoint } =
+    resolveSessionCompactionSummary(entry);
   const rowModelProvider = selectedModel.provider;
   const rowModel = selectedModel.model;
   const rowModelIdentity = resolveSessionDisplayModelIdentityRefCached({
@@ -285,6 +278,7 @@ export function buildGatewaySessionRow(params: {
     sessionKey: acpSessionKey,
     entry,
     modelCatalog: thinkingModelCatalog,
+    modelCatalogRouteVariants: preparedCatalog?.routeVariants,
     rowContext,
     providerPolicySource: preparedCatalog?.pluginRegistry ?? (lightweight ? "active" : undefined),
   });
@@ -495,6 +489,7 @@ export function buildGatewaySessionRow(params: {
         ? "inherited"
         : resolveSessionModelOverrideSource(entry),
     modelSelectionLocked: entry?.modelSelectionLocked,
+    runtimeSelectionLocked: thinkingProjection.runtimeSelectionLocked,
     agentRuntime: projectWorkerPlacementAgentRuntime(thinkingProjection.agentRuntime),
     contextTokens,
     contextBudgetStatus: resolveProjectedSessionContextBudgetStatus({
