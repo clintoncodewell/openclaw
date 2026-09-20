@@ -16,6 +16,7 @@ import { sha256HexPrefixCore } from "../../infra/crypto-digest.js";
 import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import { registerProjectRegistry } from "../../projects/project-registry.js";
 import { registerClonedProjectRegistry } from "../../projects/project-registry.test-support.js";
+import { SecretSurfaceUnavailableError } from "../../secrets/runtime-degraded-state.js";
 import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import { getSessionRepositoryWorkspaceStore } from "../../state/session-repository-workspaces.js";
@@ -23,6 +24,8 @@ import { retainUserProfileCatalog } from "../../state/user-profile-list.js";
 import { ensureProfileForEmail, linkEmail } from "../../state/user-profiles.js";
 import { createOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { bumpGatewayAccessRevision } from "../gateway-access-revision.js";
+import { gitHubPublicApi } from "../github-public-api.js";
+import * as projectGitHubSearch from "../project-github-search.js";
 import {
   createProjectsHandlers,
   projectsHandlers as registeredProjectsHandlers,
@@ -93,6 +96,77 @@ async function invokeProjectMethod(
   });
   return capture.result;
 }
+
+test.each([
+  {
+    failure: "rate limit",
+    error: () =>
+      new gitHubPublicApi.ControlUiGitHubError(429, "quota exhausted", {
+        upstreamStatus: 403,
+        retryAtMs: Date.now() + 30_000,
+      }),
+    message: "GitHub API rate limit exceeded (HTTP 403). Wait 30 seconds and retry.",
+    retryable: true,
+    retryAfterMs: 30_000,
+  },
+  {
+    failure: "authentication",
+    error: () => new gitHubPublicApi.ControlUiGitHubError(401, "credential rejected"),
+    message: "GitHub authentication failed (HTTP 401). Reconnect the GitHub identity in Settings.",
+    retryable: false,
+  },
+  {
+    failure: "repository access",
+    error: () => new gitHubPublicApi.ControlUiGitHubError(403, "repository denied"),
+    message:
+      "GitHub access denied (HTTP 403). Check the configured GitHub identity's repository access.",
+    retryable: false,
+  },
+  {
+    failure: "unavailable configured credential",
+    error: () =>
+      new SecretSurfaceUnavailableError({
+        ownerKind: "capability",
+        ownerId: "control-ui-github",
+        state: "unavailable",
+        paths: ["gateway.controlUi.github.token"],
+        refKeys: [],
+        reason: "synthetic-secret",
+      }),
+    message:
+      "The configured Control UI GitHub credential is unavailable. Resolve gateway.controlUi.github.token and retry.",
+    retryable: false,
+  },
+  {
+    failure: "unexpected diagnostic",
+    error: () => new Error("GitHub request failed with token=synthetic-secret"),
+    message: "GitHub project search is unavailable. Retry shortly.",
+    retryable: true,
+  },
+])(
+  "projects.searchRemote preserves safe $failure diagnostics and retry metadata",
+  async ({ error, message, retryable, retryAfterMs }) => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const search = vi.spyOn(projectGitHubSearch, "searchRemoteProjects").mockRejectedValue(error());
+    try {
+      const result = await invokeProjectMethod("projects.searchRemote", { query: "openclaw" });
+      expect(result).toEqual({
+        ok: false,
+        payload: undefined,
+        error: {
+          code: "UNAVAILABLE",
+          message,
+          retryable,
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain("synthetic-secret");
+    } finally {
+      search.mockRestore();
+      clock.mockRestore();
+    }
+  },
+);
 
 test("projects.list merges synthesized workspaces with stored rows deterministically", async () => {
   const state = await createOpenClawTestState({ layout: "state-only", prefix: "projects-rpc-" });
@@ -518,6 +592,131 @@ test("projects.list returns only the caller's deterministic resolved recents", a
     expect(afterAliasChange?.payload).toMatchObject({ recents: [] });
   } finally {
     releaseCatalog?.();
+    await state.cleanup();
+  }
+});
+
+test("projects.list preserves exact-path ranking, locale ties, and the pre-access recent limit", async () => {
+  const state = await createOpenClawTestState({ layout: "state-only", prefix: "projects-rpc-" });
+  try {
+    const repo = await initializeRepository(state.root);
+    const registered = await registerProjectRegistry({ path: repo, name: "Registered" });
+    const otherWorkspace = path.join(state.root, "other");
+    const localeWorkspaceDir = path.join(state.root, "locale");
+    const cfg: OpenClawConfig = {
+      agents: {
+        entries: {
+          main: { workspace: repo },
+          work: { workspace: repo },
+          other: { workspace: otherWorkspace },
+          "a-b": { workspace: localeWorkspaceDir },
+          a_b: { workspace: localeWorkspaceDir },
+        },
+      },
+    };
+    const localeWorkspace =
+      "workspace:a-b".localeCompare("workspace:a_b") < 0 ? "workspace:a-b" : "workspace:a_b";
+    const tieIds = ["é", "e\u0301"] as const;
+    expect(tieIds[0].localeCompare(tieIds[1])).toBe(0);
+    for (const [index, id] of tieIds.entries()) {
+      openOpenClawStateDatabase()
+        .db.prepare(
+          `INSERT INTO projects
+            (id, display_name, repo_root, source, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, 'registered', 1, 1)`,
+        )
+        .run(id, index === 0 ? "First tie" : "Second tie", "/work/ties");
+    }
+    const projectRecent = (projectId: string, displayName: string) => ({
+      kind: "project",
+      projectId,
+      displayName,
+    });
+    const cases = [
+      { agent: "main", folder: repo, expected: [projectRecent("workspace:main", "registered")] },
+      { agent: "work", folder: repo, expected: [projectRecent("workspace:work", "registered")] },
+      { agent: "other", folder: repo, expected: [projectRecent(registered.id, "Registered")] },
+      {
+        agent: "main",
+        sessionKey: "global",
+        folder: repo,
+        expected: [projectRecent(registered.id, "Registered")],
+      },
+      {
+        agent: "main",
+        folder: otherWorkspace,
+        expected: [projectRecent("workspace:other", "other")],
+      },
+      {
+        agent: "main",
+        folder: localeWorkspaceDir,
+        expected: [projectRecent(localeWorkspace, "locale")],
+      },
+      { agent: "main", folder: "/work/ties", expected: [projectRecent(tieIds[0], "First tie")] },
+      {
+        agent: "main",
+        folder: repo,
+        projectId: registered.id,
+        expected: [projectRecent(registered.id, "Registered")],
+      },
+      {
+        agent: "main",
+        folder: `${repo}/`,
+        expected: [{ kind: "folder", folder: `${repo}/`, displayName: "registered" }],
+      },
+      {
+        agent: "main",
+        folder: repo,
+        projectId: registered.id,
+        repositoryWorkspaceId: "missing-workspace",
+        expected: [],
+      },
+    ];
+    for (const [index, entry] of cases.entries()) {
+      const profile = ensureProfileForEmail(`ranking-${index}@example.test`);
+      replaceSessionEntrySync(
+        {
+          agentId: entry.agent,
+          sessionKey:
+            ("sessionKey" in entry ? entry.sessionKey : undefined) ??
+            `agent:${entry.agent}:ranking-${index}`,
+        },
+        {
+          sessionId: `ranking-${index}`,
+          updatedAt: 100,
+          createdActor: { type: "human", source: "profile", id: profile.id },
+          spawnedCwd: entry.folder,
+          ...("projectId" in entry ? { projectId: entry.projectId } : {}),
+          ...("repositoryWorkspaceId" in entry
+            ? { repositoryWorkspaceId: entry.repositoryWorkspaceId }
+            : {}),
+        },
+      );
+      const result = await invokeProjectMethod(
+        "projects.list",
+        {},
+        cfg,
+        ["operator.write"],
+        profile.id,
+      );
+      expect(result).toMatchObject({ ok: true, payload: { recents: entry.expected } });
+    }
+
+    const limited = ensureProfileForEmail("limited-recents@example.test");
+    for (let index = 0; index < 9; index++) {
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: `agent:main:limited-${index}` },
+        {
+          sessionId: `limited-${index}`,
+          updatedAt: 100 - index,
+          createdActor: { type: "human", source: "profile", id: limited.id },
+          spawnedCwd: index === 8 ? repo : `/work/folder-${index}`,
+        },
+      );
+    }
+    const read = await invokeProjectMethod("projects.list", {}, cfg, ["operator.read"], limited.id);
+    expect(read).toMatchObject({ ok: true, payload: { recents: [] } });
+  } finally {
     await state.cleanup();
   }
 });
