@@ -19854,6 +19854,7 @@ public struct SystemAgentChatParams: Codable, Sendable {
 public struct SystemAgentChatResult: Codable, Sendable {
     public let sessionid: String
     public let reply: String
+    public let optionalwelcome: Bool?
     public let sensitive: Bool?
     public let wizardinputpending: Bool?
     public let action: AnyCodable
@@ -19868,6 +19869,7 @@ public struct SystemAgentChatResult: Codable, Sendable {
     public init(
         sessionid: String,
         reply: String,
+        optionalwelcome: Bool? = nil,
         sensitive: Bool? = nil,
         wizardinputpending: Bool? = nil,
         action: AnyCodable,
@@ -19881,6 +19883,7 @@ public struct SystemAgentChatResult: Codable, Sendable {
     {
         self.sessionid = sessionid
         self.reply = reply
+        self.optionalwelcome = optionalwelcome
         self.sensitive = sensitive
         self.wizardinputpending = wizardinputpending
         self.action = action
@@ -19896,6 +19899,7 @@ public struct SystemAgentChatResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case sessionid = "sessionId"
         case reply
+        case optionalwelcome = "optionalWelcome"
         case sensitive
         case wizardinputpending = "wizardInputPending"
         case action
@@ -22379,8 +22383,8 @@ public struct ThemeDefinition: Codable, Sendable {
     public let description: String
     public let mascot: AnyCodable?
     public let workingphrases: [String]?
-    public let critters: [AnyCodable]?
-    public let avatarhat: AnyCodable?
+    public let critters: [String]?
+    public let avatarhat: String?
     public let light: ThemePalette?
     public let dark: ThemePalette?
 
@@ -22389,8 +22393,8 @@ public struct ThemeDefinition: Codable, Sendable {
         description: String,
         mascot: AnyCodable? = nil,
         workingphrases: [String]? = nil,
-        critters: [AnyCodable]? = nil,
-        avatarhat: AnyCodable? = nil,
+        critters: [String]? = nil,
+        avatarhat: String? = nil,
         light: ThemePalette? = nil,
         dark: ThemePalette? = nil)
     {
