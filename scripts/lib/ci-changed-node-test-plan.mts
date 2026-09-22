@@ -28,8 +28,12 @@ import {
   createSelectedNodeTestShardBundles,
   isPolicyTestOwnedPath,
   nodeTestConfigRequiresCanonicalMetadata,
+  isToolingTestOwnerPath,
   packNodeTestGroups,
   resolvePolicyTestTargets,
+  RELEASE_ONLY_TOOLING_CONFIGS,
+  isReleaseOnlyToolingTestFile,
+  isRuntimeTestFileIncluded,
   type NodeTestShardGroup,
 } from "./ci-node-test-plan.mts";
 import { isCiProofTestFile } from "./ci-proof-test-inventory.mts";
@@ -666,6 +670,8 @@ export function createChangedNodeTestShards(
   changedPaths: string[],
   options: CwdOptions & {
     runnerBackend?: string;
+    includeReleaseOnlyToolingShards?: boolean;
+    includeReleaseOnlyRuntimeTests?: boolean;
     dedicatedContractShards?: readonly { task: string; includePatterns: readonly string[] }[];
     dedicatedUiE2e?: boolean;
     dedicatedMaxLinesRatchet?: boolean;
@@ -679,6 +685,13 @@ export function createChangedNodeTestShards(
   };
   if (!Array.isArray(changedPaths) || changedPaths.length === 0) {
     return fallback("missing changed paths");
+  }
+
+  if (
+    options.includeReleaseOnlyToolingShards === false &&
+    changedPaths.some(isToolingTestOwnerPath)
+  ) {
+    return fallback("tooling owner change requires full-family coverage");
   }
 
   // Packing changes and their policy guard need the complete compact plan on
@@ -772,6 +785,9 @@ export function createChangedNodeTestShards(
     ? createNodeTestShardBundles({
         changedPaths,
         includeReleaseOnlyPluginShards: false,
+        // Explicit UI consumers retain their complete canonical host-contract rows.
+        includeReleaseOnlyToolingShards: true,
+        includeReleaseOnlyRuntimeTests: options.includeReleaseOnlyRuntimeTests,
         compactMode: "pull-request",
         runnerBackend: options.runnerBackend,
       })
@@ -817,6 +833,9 @@ export function createChangedNodeTestShards(
   }
   const targetPlans = resolvedTargetPlans.filter(
     ({ target, plans }) =>
+      (options.includeReleaseOnlyToolingShards !== false ||
+        (!isReleaseOnlyToolingTestFile(target) &&
+          !plans.every((plan) => RELEASE_ONLY_TOOLING_CONFIGS.has(plan.config)))) &&
       !plans.every(({ config }) =>
         uiShards.some((shard) =>
           shard.groups?.some(
@@ -830,7 +849,14 @@ export function createChangedNodeTestShards(
   );
   // Resolve every changed source first, then defer only named complete proofs.
   // Filtering inputs earlier would hide an unresolved companion or helper.
-  const prTargetPlans = targetPlans.filter(({ target }) => !isCiProofTestFile(target));
+  const runtimeSelection = {
+    changedPaths: livePaths,
+    includeReleaseOnlyRuntimeTests: options.includeReleaseOnlyRuntimeTests,
+  };
+  const prTargetPlans = targetPlans.filter(
+    ({ target }) =>
+      !isCiProofTestFile(target) && isRuntimeTestFileIncluded(target, runtimeSelection, cwd),
+  );
   const onlyDeferredProofTargets = targetPlans.length > 0 && prTargetPlans.length === 0;
   const canonicalTargets = prTargetPlans
     .filter(({ plans }) =>
@@ -843,6 +869,7 @@ export function createChangedNodeTestShards(
     ? path.resolve(cwd) === process.cwd()
       ? createSelectedNodeTestShardBundles(canonicalTargets, {
           runnerBackend: options.runnerBackend,
+          ...runtimeSelection,
         })
       : null
     : [];
@@ -906,7 +933,7 @@ export function createChangedNodeTestShards(
     ...boundaryShards,
   ];
   // Covered source targets keep build-artifacts ownership even with no Node rows.
-  return shards.length > 0 || targets.length < targetPlans.length
+  return shards.length > 0 || targets.length < resolvedTargetPlans.length
     ? shards
     : fallback("no executable Node owner");
 }

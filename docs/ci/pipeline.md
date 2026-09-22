@@ -35,6 +35,41 @@ plugin coverage lives in the separate
 [`Full Release Validation`](/ci/release-validation#full-release-validation) or an explicit manual
 dispatch.
 
+The full named Node plan retains the complete maintainer-tooling family through
+`RELEASE_ONLY_TOOLING_SHARDS` and the matching maintainer leaves in mixed fast
+configs. Product-only PRs omit this family in both precise and broad fallback
+plans. A PR touching a tooling test or owner runs the full family:
+`scripts/**`, `src/scripts/**`, `test/**`, `.github/**`, `config/**`, root
+package and pnpm inputs, tooling configs, and the other inputs classified as
+tooling by the shared changed-path owner in `scripts/test-projects.test-support.mts`.
+That owner also covers Docker, agent/Crabbox tooling, app scripts/Fastlane, and
+extension scripts/package inputs. The existing tooling Vitest configs and fast
+config inventories still determine execution. Maintainer leaves keep their
+original ordinary, isolated, or fake-timer config and process pins; filtering a
+mixed group retains its product tests and uses separate subset timing identities.
+The five `test/scripts/*.e2e.test.ts` product integration gates remain outside
+this maintainer tier.
+
+Every CI manual dispatch includes the full tooling family. Full Release
+Validation's `normal_ci` child dispatches CI on the frozen candidate, where
+`Run Node test shard` executes those unchanged tests before the regular release
+publication gate accepts the campaign. OpenClaw Release Checks and Plugin
+Prerelease are separate proof owners. This is candidate validation, not a test
+deferred until promotion. Direct human beta publication with approved
+preflight-only evidence remains an explicit existing exception to full-campaign
+validation; this tier does not change publication authority.
+Fork repositories keep their existing full tooling coverage because they do not
+use the canonical changed-test planner. Fork-origin PRs targeting this repository
+use the canonical PR selection and retain changed-owner coverage.
+
+Main push plans already omitted named tooling shards; they now also omit the
+maintainer leaves previously retained by fast configs, even for tooling-owner
+changes. A regression introduced by a later main merge can therefore remain invisible to
+main CI until an affected PR or full manual/release validation runs the family.
+The PR merge-ref result proves only the tree it tested. The current `ci-gate`
+aggregates selected jobs; it does not add a separate tooling proof against later
+main revisions.
+
 Scheduled QA runs nightly at 04:41 UTC. Its live runtime job runs the
 `gateway-restart-full-access-live` scenario with `openai/gpt-5.6-luna` alongside
 the three-restart replay-safety scenario. The Full Access check must preserve
@@ -80,8 +115,11 @@ Linux test shards select Bun through `scripts/lib/ci-test-runtime.mts`. The
 ordinary and isolated unit-fast lanes partition their existing file inventories: files with known Bun
 failures or additional skips stay on Node, and the compatible remainder runs on
 Bun. Those Node files still execute; they are not excluded from CI. The complete
-fake-timer lane also supports Bun. UI and other families retain Node until they
-pass on the pinned fork within their existing CI resource budgets. Precise PR targets use the existing
+fake-timer lane also supports Bun. Control UI retains two whole GC-sensitive
+files on Node (`chat-pane-retained-presentation.test.ts` and
+`usage-page-details.test.ts`) and runs the remaining files on Bun.
+Other families retain Node until they pass on the pinned fork within their
+existing CI resource budgets. Precise PR targets use the existing
 test-project planner to find their owners. Mixed or ambiguous selections retain
 Node, and no tests are removed from the selected inventory.
 
@@ -90,6 +128,30 @@ Ordinary manual CI, including Full Release Validation's `normal_ci` child, runs
 the complete original selection on Node and its compatible portion on Bun
 within the same job and worker slot. Other selections run on Node. Main pushes retain Node. Historical targets
 without the runtime-selection capability keep their original Node behavior.
+The UI job probes its actual config and arguments through the target's runtime
+owner, so older unit-only helpers, helpers requiring the retired global FTL flag,
+and legacy compatibility targets retain Node.
+Its three native shards and three workers per row remain unchanged.
+The UI runtime partition is applied after Vitest selects each native shard, so
+files keep their original shard ownership. A shard with no Node-only files
+finishes that partition without running other UI files. Dual validation runs
+the complete UI selection on Node, then excludes only those two files from Bun;
+their assertions remain required on Node, with no added skips.
+
+The nonbrowser Control UI projects load `bun-css-tokenizer.setup.ts`. On Bun,
+this setup resolves jsdom's native CSS tokenizer and prevents inlining only its
+`endOfFile` predicate. The pinned fork can otherwise
+enter an unbounded CSS-tokenizer loop after an ordered sequence of UI files.
+Baseline, DFG, and FTL JIT remain enabled; Node and Chromium are unaffected.
+The UI runtime owner delays FTL compilation with warmup/soon thresholds of
+512000/8000. These short-lived workers benefit from less compilation work;
+the protected cache publisher uses the same policy when collecting its seven
+canonical UI seed files on Bun. PR jobs restore that Bun seed alongside the
+Node seed, with separate transform-cache leaves.
+The setup leaves tokenizer exports and CSS behavior unchanged. Remove it
+only after a corrected pinned runtime passes the original ordered reproduction,
+the complete UI config, and all three native shards within their existing memory
+budgets.
 
 The test-runtime setup action installs a checksum-pinned build of the Bun fork
 only for jobs that need it. The source commit, archive checksum, and executable
@@ -99,8 +161,8 @@ Vitest and its workers use the selected runtime. Bun and Node have separate
 transform-cache directories and timing identities. Either runtime failing fails
 the job. This adds no matrix rows or runner registrations.
 
-`NODE_OPTIONS` continues to limit Node heaps; Bun does not use that V8 heap
-limit. Compare observed memory use alongside elapsed time before admitting more
+`NODE_OPTIONS`, where configured, limits Node heaps; the UI lane retains Node's
+default heap limit. Bun does not use that V8 limit. Compare observed memory use alongside elapsed time before admitting more
 lanes. Compatibility evidence must use the exact fork build installed by CI;
 stock Bun results and different fork revisions are separate measurements.
 
@@ -223,7 +285,9 @@ Gateway startup checks. The explicit step prepares the runtime once with
 `pnpm build qaRuntime`, then runs the config corpus and all eight state files in
 one Vitest process with at most four workers. A failed preparation stops the step
 before workers consume memory or attempt their own builds. Frozen targets from
-before the file split retain their config process and four state processes.
+before the file split retain their config process and four state processes,
+admitted in batches with one slot per four available CPUs (at least one slot).
+A failed corpus run is reported while the remaining shards still run.
 The corpus uses the normal bundled-plugin resolver to select the prepared
 runtime from this checkout instead of forcing TypeScript plugin entrypoints.
 Plugins whose Doctor contracts require source loading retain that behavior;
@@ -283,8 +347,11 @@ small set of security policy and enforcement files that require SecOps approval.
 
 The **Security Review** workflow runs both guards from trusted repository code.
 It publishes a commit status named `openclaw/ci-gate` that requires both the
-applicable approvals and a successful native CI gate from the latest CI run for
-the current PR head. The existing CI job retains its check with the same name.
+applicable approvals and a successful native CI gate from the latest applicable
+CI run for the current PR head. Completed, wholly skipped pull-request runs do
+not replace substantive CI runs. Newer running, failed, or canceled runs still
+take precedence, and skipped release-gate dispatches still block approval. The
+existing CI job retains its check with the same name.
 GitHub requires both the check and the commit status when both share a required
 context. Missing approval, failed CI, or evaluation errors fail the review status.
 Missing or running CI leaves it pending and keeps merging blocked. CI completion
@@ -309,16 +376,26 @@ have a 30-second timeout. Secondary limits without timing guidance use at least
 one minute of exponential backoff. Small randomized delays spread retries after
 quota resets. Jobs have a 75-minute ceiling, and waiting occupies their runner.
 Recovery is automatic in the same run and does not require another PR event or
-manual dispatch. Exhausted recovery fails the job without publishing success;
-quota exhaustion can also prevent a new status from being published. Ordinary
-permission errors, uncertain writes, and other evaluation errors are not retried.
+manual dispatch. Exhausted recovery fails the job; GitHub errors can also prevent
+a new status from being published. Ordinary permission errors and other
+evaluation errors are not retried.
 Checkout, runtime setup, and separately minted autoscrub token expiry are outside
 this recovery mechanism.
 
+Transient commit-status publication failures also restart the complete evaluation.
+HTTP `500`, `502`, `503`, and `504` responses and recognized connection failures
+use one-, two-, and four-second delays, sharing the three-restart limit and job
+deadline with rate-limit recovery. GitHub may have accepted the failed write, so
+the review rereads current PR, approval, role, and CI data instead of replaying an
+old decision. This recovery applies only to commit-status publication; other
+uncertain writes, cancellation, and request timeouts remain errors.
+
 Separately, read-only `GET` and `HEAD` requests retry HTTP `500`, `502`, `503`,
-and `504` responses after one, two, and four seconds, within the original
-30-second request timeout. These request retries exclude writes. HTTP errors
-include the request method and endpoint to identify the failed operation.
+and `504` responses and recognized transient connection failures before a
+response arrives. They share one retry budget of one, two, and four seconds,
+within the original 30-second request timeout. These retries exclude writes,
+caller cancellation, certificate errors, and unrecognized errors. HTTP and
+connection errors identify the request method and endpoint.
 
 If GitHub's changed-file count and file list disagree, the guards retry the complete
 file-list read after one, two, and four seconds. Each retry rereads PR metadata;
@@ -337,6 +414,10 @@ remove its review requirement.
 The **Dependency Guard** publishes `openclaw/dependency-review` and retains its
 dependency classification and lockfile autoscrub behavior. Dependency removals
 that already qualify as informational remain informational.
+If neither cleanup App can provide a write token, optional lockfile cleanup is
+skipped with an explanation in the workflow summary. The dependency review still
+requires maintainer approval or removal of the lockfile changes; unavailable
+cleanup credentials do not fail the Actions job.
 
 Edit `.github/security-review-policy.yml` to change path classification. Its
 `categories` group product paths with descriptions and review guidance;
