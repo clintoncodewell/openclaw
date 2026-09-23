@@ -16,7 +16,11 @@ import {
   captureSessionStoreReadCandidate,
 } from "./session-store-read-candidates.js";
 import { captureSessionStoreReadCandidates } from "./session-store-target-inventory.js";
-import { withSessionHistoryWorkerReadCandidates } from "./session-transcript-worker-resources.js";
+import {
+  maintenanceLane,
+  withSessionHistoryWorkerReadCandidates,
+  type SessionHistoryWorkerLane,
+} from "./session-transcript-worker-resources.js";
 import { withSessionHistoryWorkerDatabase } from "./session-transcript-worker-runtime.js";
 import type {
   SessionExactEntriesWorkerResult,
@@ -92,12 +96,13 @@ export async function withSessionEntriesFromStoresInWorker<T>(
 
 /** The ordinary return API returns data, never a retained authority claim. */
 export function readSessionEntriesFromStoreInWorker(input: SessionEntryWorkerRead) {
-  return withSessionEntriesFromStoresInWorker([input], ([read]) => read!.result);
+  return withSessionEntriesFromStoreInWorker(input, async (read) => read.result, true);
 }
 
 async function withSessionEntriesFromStoreInWorker<T>(
   input: SessionEntryWorkerRead,
   consume: (read: PreparedSessionEntryWorkerRead) => Promise<T>,
+  dataOnly = false,
 ): Promise<T> {
   const request = {
     sessionKeys: [...new Set(input.sessionKeys)],
@@ -113,7 +118,7 @@ async function withSessionEntriesFromStoreInWorker<T>(
       assertCurrent();
       return consume({ result, database, assertCurrent });
     },
-    input.projection === "backing",
+    { backing: input.projection === "backing", dataOnly },
   );
 }
 
@@ -144,6 +149,7 @@ export async function readExpiredCronRunEntriesInWorker(
       assertCurrent();
       return entries;
     },
+    { lane: maintenanceLane, dataOnly: true },
   );
 }
 
@@ -155,7 +161,15 @@ async function withSessionStoreReaderInWorker<T>(
     continuation: CanonicalSessionReaderContinuation | undefined,
     assertCurrent: () => void,
   ) => Promise<T>,
-  backing = false,
+  {
+    backing = false,
+    lane,
+    dataOnly = false,
+  }: {
+    backing?: boolean;
+    lane?: SessionHistoryWorkerLane;
+    dataOnly?: boolean;
+  } = {},
 ): Promise<T> {
   const env = cloneEnvWithPlatformSemantics(input.env ?? process.env);
   env.OPENCLAW_STATE_DIR = resolveStateDir(env);
@@ -178,6 +192,7 @@ async function withSessionStoreReaderInWorker<T>(
     path: string;
     owner: NonNullable<ReturnType<typeof captureCanonicalSessionReaderContinuation>>;
   }> = [];
+  let assertFinalCurrent: (() => void) | undefined;
   try {
     for (const database of native?.databases ?? []) {
       const owner = captureCanonicalSessionReaderContinuation(database);
@@ -193,67 +208,87 @@ async function withSessionStoreReaderInWorker<T>(
       assertRoute: () => void,
     ) => {
       const continuation = continuations.find((item) => item.path === database.path)?.owner;
-      return withSessionHistoryWorkerDatabase({ ...database, env }, async (owner) => {
-        let active = true;
-        const assertCurrent = () => {
-          if (!active) {
-            throw new Error("Session entry read consumer is no longer active");
+      return withSessionHistoryWorkerDatabase(
+        { ...database, env },
+        async (owner) => {
+          let active = true;
+          const assertCapturedCurrent = () => {
+            owner.assertCurrent();
+            continuation?.assertCurrent();
+            assertRoute();
+          };
+          if (dataOnly) {
+            assertFinalCurrent = assertCapturedCurrent;
           }
-          owner.assertCurrent();
-          continuation?.assertCurrent();
-          assertRoute();
-        };
-        try {
-          return await read(
-            owner,
-            { ...database, env: { ...env } },
-            continuation?.receipt,
-            assertCurrent,
-          );
-        } finally {
-          active = false;
-        }
-      });
+          const assertCurrent = () => {
+            if (!active) {
+              throw new Error("Session entry read consumer is no longer active");
+            }
+            assertCapturedCurrent();
+          };
+          try {
+            return await read(
+              owner,
+              { ...database, env: { ...env } },
+              continuation?.receipt,
+              assertCurrent,
+            );
+          } finally {
+            active = false;
+          }
+        },
+        lane,
+      );
     };
     if (direct && target.agentId) {
       resolveSqliteAgentId({ scopedAgentId: agentId, storeAgentId: target.agentId });
-      return await readDatabase({ agentId: target.agentId, path: captured.physicalPath }, () =>
-        assertSessionStoreReadCandidate(target.path, [captured]),
+      const result = await readDatabase(
+        { agentId: target.agentId, path: captured.physicalPath },
+        () => assertSessionStoreReadCandidate(target.path, [captured]),
       );
+      assertFinalCurrent?.();
+      return result;
     }
     const registryRead = prepareOpenClawAgentDatabaseRegistrySnapshotRead({ env });
-    return await withSessionHistoryWorkerReadCandidates(candidates, async (discovery) => {
-      const request = { agentId, storePath, env };
-      let resolved = await discovery.readStoreTarget({
-        ...request,
-        registeredDatabases: { status: "deferred" },
-      });
-      let assertRegistryCurrent: (() => void) | undefined;
-      if (resolved.kind === "session-target-registry-required") {
-        const registry = await registryRead.read();
-        assertRegistryCurrent = registry.assertCurrent;
-        registry.assertCurrent();
-        discovery.assertCurrent();
-        resolved = await discovery.readStoreTarget({
+    const result = await withSessionHistoryWorkerReadCandidates(
+      candidates,
+      async (discovery) => {
+        const request = { agentId, storePath, env };
+        let resolved = await discovery.readStoreTarget({
           ...request,
-          registeredDatabases:
-            registry.result.status === "available"
-              ? registry.result.entries
-              : { status: "unavailable" },
+          registeredDatabases: { status: "deferred" },
         });
+        let assertRegistryCurrent: (() => void) | undefined;
         if (resolved.kind === "session-target-registry-required") {
-          throw new Error("Session store target requested registry rows twice");
+          const registry = await registryRead.read();
+          assertRegistryCurrent = registry.assertCurrent;
+          registry.assertCurrent();
+          discovery.assertCurrent();
+          resolved = await discovery.readStoreTarget({
+            ...request,
+            registeredDatabases:
+              registry.result.status === "available"
+                ? registry.result.entries
+                : { status: "unavailable" },
+          });
+          if (resolved.kind === "session-target-registry-required") {
+            throw new Error("Session store target requested registry rows twice");
+          }
         }
-      }
-      assertRegistryCurrent?.();
-      discovery.assertCurrent();
-      const selected = resolved;
-      return await readDatabase(selected.database, () => {
         assertRegistryCurrent?.();
         discovery.assertCurrent();
-        assertSessionStoreReadCandidate(selected.sourcePath, candidates);
-      });
-    });
+        const selected = resolved;
+        return await readDatabase(selected.database, () => {
+          assertRegistryCurrent?.();
+          discovery.assertCurrent();
+          assertSessionStoreReadCandidate(selected.sourcePath, candidates);
+        });
+      },
+      lane,
+    );
+    // Only returned data may be refused after cleanup; synchronous consumers can already publish.
+    assertFinalCurrent?.();
+    return result;
   } finally {
     for (const { owner } of continuations.toReversed()) {
       owner.release();
