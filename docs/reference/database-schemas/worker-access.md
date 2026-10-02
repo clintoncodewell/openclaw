@@ -16,6 +16,21 @@ paths are migration debt, not a pattern to extend. The
 [migration inventory](/reference/database-schemas/worker-access-inventory) separates
 candidate main-thread paths from SQL already executing in workers.
 
+Inventory classifications describe counted operations, not whole-module runtime
+safety. Reviewed mixed modules use named operation paths rather than line numbers;
+unreviewed operations retain their conservative file classification. Trace every
+production caller before adding an operation exception, and update existing
+reviewed overrides instead of shadowing them with worker-module entries. The
+ratchet applies the same classification rules to the base and candidate sources,
+so metadata corrections alone do not offset unrelated T1 growth.
+
+Canonical-repair mutations are T2 Doctor work, but its exact-row reader remains
+runtime debt through the Gateway's legacy-main agent-creation check. Claw
+provenance's counted CLI writes do not cover its raw Gateway SQL reads. Shared
+incognito category readers and native approval SDK compatibility retain their
+existing classifications. A metadata reclassification changes neither execution
+nor update behavior.
+
 Runtime cache-TTL, bootstrap, prompt-error, and provider replay markers append
 through the existing transcript writer worker. Custom-message appends use the
 same worker and adopt their committed view before notifying observers. Bootstrap
@@ -202,17 +217,19 @@ snapshot, including both MCP reconstruction passes. Process-held incognito
 databases retain their native owner. There is no synchronous fallback when the
 worker is busy and no retained summary cache.
 
-Legacy session-entry patches yield while waiting for a competing SQLite writer.
-Each `BEGIN IMMEDIATE` attempt uses a zero busy timeout and can retry within the
-connection's existing admission budget. Once admitted, the synchronous callback
-and commit retain the connection's original busy timeout: rollback-journal
-readers can temporarily block commit even after writer admission succeeds.
-The session writer queue retains FIFO order, the captured connection stays
-retained, and each attempt rechecks its owner. The admitted transaction revalidates
-the prepared rows and caller authority before mutation. Its callback and committed
-publications never replay. Entry reads and transaction bodies still execute on
-the calling thread; this bounded cutover removes native writer-admission waits without
-changing schemas, durability, or update behavior.
+Audited internal session-entry patches use the agent executor for snapshot reads,
+CAS validation, mutation, and COMMIT. Usage accounting, unguarded compaction
+accounting, restart cleanup, activity recaps, and the entry owner's prepared
+upsert, replacement, and route-metadata operations select this path explicitly.
+The host runs each updater once and retains live authority. Recap transcript
+predicates run inside the write transaction before CAS. Bounded provisional
+result transfers precede the final grant; a compact native receipt certifies the
+exact committed result. Publication, committed callbacks, and identity observers
+settle before the physical database FIFO is released. Unknown writes never replay.
+Incognito, maintenance, opaque plugin callbacks, and unclassified internal guards
+retain native transactions and yielding writer admission. Arbitrary async plugin
+updaters retain their existing nested-admission behavior. Schemas, durability,
+public callback contracts, and update behavior are unchanged.
 
 Channel setup awaits a fresh policy read after the agent-selection prompt.
 Deferred plugin migration rows are read by the shared-state worker, and setup
@@ -520,6 +537,19 @@ receipts publish claim authority and release observers before callers continue,
 including when ordinary reply delivery fails. Local forced completion and final
 cleanup join the same pending release. Restart recovery, schemas, persisted
 fields, and update behavior are unchanged.
+
+Worker transcript replay-ledger begin, completion, and exact discard use typed
+`placementTranscript` commands in the existing shared-state registry. The
+placement mutation owner captures physical store identity before yielding,
+rechecks live host authority at transaction and commit admission, and returns
+acknowledged receipts through the existing keyed session queue. Pending records
+commit before agent transcript effects; terminal results commit before the RPC
+reply. Lost replies use native commit receipts, never write replay. Unknown
+outcomes retain pending recovery. Only the invocation holding a fresh claim may
+discard after a known rollback, using its original store and exact row identity
+even if request authority has since ended. Database close joins accepted work.
+The agent transcript writer, schema, stored bytes, retention, and update behavior
+are unchanged.
 
 Staged workspace-result pointers also commit through that placement worker. The
 same transaction checks the pending-result claim, immutable staged ref, and exact
@@ -1084,6 +1114,15 @@ worker; visibility and public-share mutations use the same prepared authority
 through their existing entry-patch owner. Participant and category writes retain
 their existing collaboration worker, and incognito retains its native owner.
 This changes no schema, permission, retention, or update contract.
+
+Session-scoped command and skill discovery uses those same current sharing facts.
+It captures the session and physical source before membership readiness yields,
+refuses dirty membership, and rechecks caller, role, session, and source authority
+after discovery. Exact row preparation carries pinned skill selections separately
+from compact sharing facts; response publication compares the current selections
+in the same synchronous consuming frame. Personal skill-library storage, exec-policy
+eligibility, and process-held incognito ownership remain with their existing owners.
+This changes no SDK, RPC schema, stored data, permission, or update contract.
 
 For writes, shared-state domain operations registered by
 `src/state/openclaw-state-worker-runtime.ts` reuse the broker and publish results
