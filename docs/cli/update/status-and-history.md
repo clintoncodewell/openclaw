@@ -44,6 +44,20 @@ It describes the preferred selection for the observed configured channel, not ca
 An explicit update invocation can select a different target or install method.
 Older installed status commands cannot acquire this observation from candidate code.
 
+For adopted immutable installations, the installation projection includes
+`activationEnabled` only when explicitly enabled. `activation` reports a
+retained operation's `operationId`, `phase`, `previousSha`, and `candidateSha`;
+`lastActivation` records the verified result and selected generation after
+retirement. Read these under `update.immutable` in CLI JSON or
+`schedule.install.immutable` in Gateway `update.status`. A prepared generation
+or `starting` phase is not activation success. Use
+[`openclaw update recover --root <installation-root>`](/cli/update#immutable-release-installations)
+to reconcile a retained operation.
+Once the Gateway recognizes an adopted immutable installation, ordinary
+`update.status` requests refresh its native activation facts; callers do not need
+`refreshCheckout: true` to observe phase changes. That installation's native
+record takes precedence over an external update manager.
+
 For Git installs, `update status --json` can include `update.git.artifacts`.
 `ready: true` includes the installed artifact `version` and immutable `buildId` after the native verifier checks the observed source commit, build stamps, runtime entry, and Control UI assets.
 `ready: false` means that verification failed; an absent field means artifact readiness is unknown.
@@ -180,6 +194,12 @@ and recovery instructions, open **Settings → Updates** in the Control UI or ru
 update view, and the `openclaw status` update line use the detailed report,
 including on success. The report shows recorded facts; an absent verification
 fact means that check has not been observed.
+
+If recovery verifies that the Gateway is still serving after a failed update,
+the terminal and saved Markdown guidance name that version and direct you to fix
+the update failure before retrying `openclaw update`. The update remains failed;
+serving health does not grant permission to restart or roll back. Restart-safety
+and migrated-state constraints remain visible separately.
 
 An unsuccessful identity check is reported as a version or build mismatch only
 when the saved observed and expected values disagree. Missing identity evidence

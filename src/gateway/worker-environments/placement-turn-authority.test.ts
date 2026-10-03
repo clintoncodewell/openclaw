@@ -188,9 +188,9 @@ it.each(["local", "worker-turn", "remote-exec"] as const)(
         if (claim.owner.kind === "worker") {
           await store.updateAckCursors({ claim, liveEvent: 2 });
           expect(authority.isCurrent()).toBe(true);
-          store.startWorkspaceResultDrain(claim);
+          await store.startWorkspaceResultDrain(claim);
         } else {
-          store.startDrain({
+          await store.startDrain({
             sessionId: claim.sessionId,
             environmentId: active.environmentId,
             ownerEpoch: active.activeOwnerEpoch,
@@ -200,7 +200,10 @@ it.each(["local", "worker-turn", "remote-exec"] as const)(
       } else {
         await store.startDispatch(SESSION);
         expect(authority.isCurrent()).toBe(true);
-        store.fail({ sessionId: claim.sessionId, recoveryError: "synthetic dispatch failure" });
+        await store.fail({
+          sessionId: claim.sessionId,
+          recoveryError: "synthetic dispatch failure",
+        });
       }
       expect(authority.isCurrent()).toBe(true);
     } finally {
@@ -225,7 +228,7 @@ it("prepares a persisted failed remote-exec local claim without changing its rel
   const authority = await store.prepareTurnClaimAuthority(claim);
   try {
     expect(authority.isCurrent()).toBe(true);
-    store.fail({ sessionId: claim.sessionId, recoveryError: "cleanup is still pending" });
+    await store.fail({ sessionId: claim.sessionId, recoveryError: "cleanup is still pending" });
     expect(authority.isCurrent()).toBe(true);
     await store.releaseTurn(claim);
     expect(authority.isCurrent()).toBe(false);

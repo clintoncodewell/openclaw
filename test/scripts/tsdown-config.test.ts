@@ -356,6 +356,7 @@ describe("tsdown config", () => {
       entry: {
         [entryName]: "extensions/imap/index.ts",
         "plugin-sdk/plugin-state-store-runtime": "src/plugin-sdk/plugin-state-store-runtime.ts",
+        "plugin-sdk/plugin-test-api": "src/plugin-sdk/plugin-test-api.ts",
       },
       outDir: path.join(root, "dist"),
       dts: false,
@@ -506,6 +507,7 @@ describe("tsdown config", () => {
             .split("/")
             .slice(0, specifier.startsWith("@") ? 2 : 1)
             .join("/");
+          expect(packageName, specifier).not.toBe("@openclaw/ai");
           expect(Object.hasOwn(dependencies, packageName), specifier).toBe(true);
           const destination = path.join(root, "node_modules", packageName);
           if (!fs.existsSync(destination)) {
@@ -525,6 +527,11 @@ describe("tsdown config", () => {
           .map(([module]) => module.replaceAll("\\", "/"));
         expect(
           renderedModules.filter((module) =>
+            /\/(?:packages\/ai|node_modules\/@openclaw\/ai)\//u.test(module),
+          ),
+        ).toEqual([]);
+        expect(
+          renderedModules.filter((module) =>
             /\/extensions\/[^/]+\/(?:doctor-contract-api|runtime|index|channel-entry|setup-entry)\.[cm]?[jt]s$/u.test(
               module,
             ),
@@ -537,11 +544,23 @@ describe("tsdown config", () => {
         import { pathToFileURL } from "node:url";
         const [root, entriesJson] = process.argv.slice(1);
         const modules = {};
+        const historicalListeners = {
+          feishu: { port: 3000, host: "127.0.0.1" },
+          msteams: { port: 3978, preserveAuthoredActivation: true },
+          "nextcloud-talk": { port: 8788, host: "0.0.0.0" },
+          telegram: { port: 8787, host: "127.0.0.1" },
+        };
         for (const name of JSON.parse(entriesJson)) {
           const mod = await import(pathToFileURL(path.join(root, name + ".js")).href);
+          const listener = historicalListeners[name];
           assert.deepEqual(Object.keys(mod).sort(), name === "clickclack"
             ? ["normalizeCompatibilityConfig"]
-            : ["legacyConfigRules", "normalizeCompatibilityConfig"]);
+            : [...(listener ? ["historicalWebhookListener"] : []), "legacyConfigRules", "normalizeCompatibilityConfig"]);
+          if (listener) {
+            assert.deepEqual(mod.historicalWebhookListener, {
+              channelId: name, preserveAuthoredActivation: undefined, ...listener,
+            });
+          }
           modules[name] = mod;
         }
         const cfg = { channels: { discord: { dm: { enabled: true, policy: "allowlist", allowFrom: ["123"] }, accounts: { work: { dm: { policy: "disabled", allowFrom: ["456"] } } } } }, plugins: { allow: [] } };
